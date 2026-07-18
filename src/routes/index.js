@@ -38,6 +38,7 @@ router.post('/merchant-rules', ...categoryController.createRule);
 router.delete('/merchant-rules/:id', categoryController.deleteRule);
 
 // Budget
+router.get('/budget/chart', budgetController.getChart);
 router.get('/budget', budgetController.getSummary);
 
 module.exports = router;

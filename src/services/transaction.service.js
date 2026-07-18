@@ -67,7 +67,11 @@ const transactionService = {
       if (!cat) throw new AppError('Category not found', 400);
     }
 
-    const updated = await transactionRepository.update(id, data);
+    const updated = await transactionRepository.update(id, {
+      categoryId: data.categoryId,
+      isIgnored: data.isIgnored,
+      amount: data.amount,
+    });
     return updated;
   },
 

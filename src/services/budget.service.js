@@ -96,6 +96,50 @@ const budgetService = {
     const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
     return { monthStart, monthEnd };
   },
+
+  /**
+   * Returns daily spending data for the current week and month for charts.
+   *
+   * @returns {Promise<Object>}
+   */
+  async getChartData() {
+    const now = new Date();
+    const { weekStart, weekEnd } = budgetService.getCurrentWeekRange(now);
+    const { monthStart, monthEnd } = budgetService.getCurrentMonthRange(now);
+
+    const [weekRows, monthRows] = await Promise.all([
+      transactionRepository.findDailyTotals(weekStart, weekEnd),
+      transactionRepository.findDailyTotals(monthStart, monthEnd),
+    ]);
+
+    // Build a map for quick lookup
+    const toMap = (rows) => Object.fromEntries(rows.map((r) => [r.date, r]));
+    const weekMap = toMap(weekRows);
+    const monthMap = toMap(monthRows);
+
+    // Generate all days in range and fill gaps with zeros
+    const fillDays = (start, end, map) => {
+      const days = [];
+      const cur = new Date(start);
+      while (cur <= end) {
+        const dateStr = cur.toISOString().split('T')[0];
+        days.push(map[dateStr] || { date: dateStr, realSpent: 0, totalSpent: 0 });
+        cur.setDate(cur.getDate() + 1);
+      }
+      return days;
+    };
+
+    return {
+      weekly: {
+        days: fillDays(weekStart, weekEnd, weekMap),
+        budget: env.WEEKLY_BUDGET,
+      },
+      monthly: {
+        days: fillDays(monthStart, monthEnd, monthMap),
+        budget: env.MONTHLY_BUDGET,
+      },
+    };
+  },
 };
 
 module.exports = budgetService;

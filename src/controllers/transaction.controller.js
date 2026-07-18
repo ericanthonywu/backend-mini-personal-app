@@ -7,6 +7,7 @@ const validate = require('../middlewares/validator');
 const updateSchema = Joi.object({
   categoryId: Joi.string().uuid().allow(null).optional(),
   isIgnored: Joi.boolean().optional(),
+  amount: Joi.number().integer().min(0).optional(),
 });
 
 const transactionController = {

@@ -123,6 +123,7 @@ const transactionRepository = {
     const updates = { updated_at: new Date() };
     if (data.categoryId !== undefined) updates.category_id = data.categoryId;
     if (data.isIgnored !== undefined) updates.is_ignored = data.isIgnored;
+    if (data.amount !== undefined) updates.amount = data.amount;
 
     const [row] = await db('transactions').where({ id }).update(updates).returning('*');
     return row;
@@ -160,6 +161,31 @@ const transactionRepository = {
       .select('t.*', 'c.name as category_name', 'c.color as category_color')
       .orderBy('t.transaction_date', 'desc')
       .limit(limit);
+  },
+
+  /**
+   * Get daily spending totals for a date range, split by real vs total.
+   *
+   * @param {Date} dateFrom
+   * @param {Date} dateTo
+   * @returns {Promise<Array<{ date: string, realSpent: number, totalSpent: number }>>}
+   */
+  async findDailyTotals(dateFrom, dateTo) {
+    const rows = await db('transactions')
+      .whereBetween('transaction_date', [dateFrom, dateTo])
+      .select(
+        db.raw('DATE(transaction_date) as date'),
+        db.raw('SUM(amount) as total_spent'),
+        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+      )
+      .groupByRaw('DATE(transaction_date)')
+      .orderBy('date', 'asc');
+
+    return rows.map((r) => ({
+      date: r.date instanceof Date ? r.date.toISOString().split('T')[0] : String(r.date),
+      realSpent: parseInt(r.real_spent || '0', 10),
+      totalSpent: parseInt(r.total_spent || '0', 10),
+    }));
   },
 };
 
