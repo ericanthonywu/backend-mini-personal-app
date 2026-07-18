@@ -1,0 +1,35 @@
+{
+  "name": "expense-tracker-backend",
+  "version": "1.0.0",
+  "description": "Personal BCA credit card expense tracker backend",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "migrate": "knex migrate:latest",
+    "migrate:rollback": "knex migrate:rollback",
+    "seed": "knex seed:run",
+    "test": "jest --runInBand",
+    "test:parser": "jest --testPathPattern=email-parser",
+    "test:budget": "jest --testPathPattern=budget"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "imap": "^0.8.19",
+    "joi": "^17.13.1",
+    "jsonwebtoken": "^9.0.2",
+    "knex": "^3.1.0",
+    "mailparser": "^3.7.1",
+    "node-cron": "^3.0.3",
+    "pg": "^8.12.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4",
+    "supertest": "^7.0.0"
+  }
+}
