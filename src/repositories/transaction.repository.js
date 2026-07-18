@@ -32,13 +32,31 @@ const transactionRepository = {
         'c.color as category_color'
       );
 
-    if (categoryId !== undefined) baseQuery.where('t.category_id', categoryId);
-    if (isIgnored !== undefined) baseQuery.where('t.is_ignored', isIgnored);
-    if (dateFrom) baseQuery.where('t.transaction_date', '>=', dateFrom);
-    if (dateTo) baseQuery.where('t.transaction_date', '<=', dateTo);
-    if (search) baseQuery.whereILike('t.merchant', `%${search}%`);
+    // Separate count query to avoid GROUP BY conflicts with SELECT *
+    const countQuery = db('transactions as t');
 
-    const [{ count }] = await baseQuery.clone().count('t.id as count');
+    if (categoryId !== undefined) {
+      baseQuery.where('t.category_id', categoryId);
+      countQuery.where('t.category_id', categoryId);
+    }
+    if (isIgnored !== undefined) {
+      baseQuery.where('t.is_ignored', isIgnored);
+      countQuery.where('t.is_ignored', isIgnored);
+    }
+    if (dateFrom) {
+      baseQuery.where('t.transaction_date', '>=', dateFrom);
+      countQuery.where('t.transaction_date', '>=', dateFrom);
+    }
+    if (dateTo) {
+      baseQuery.where('t.transaction_date', '<=', dateTo);
+      countQuery.where('t.transaction_date', '<=', dateTo);
+    }
+    if (search) {
+      baseQuery.whereILike('t.merchant', `%${search}%`);
+      countQuery.whereILike('t.merchant', `%${search}%`);
+    }
+
+    const [{ count }] = await countQuery.count('t.id as count');
 
     const data = await baseQuery
       .orderBy('t.transaction_date', 'desc')
