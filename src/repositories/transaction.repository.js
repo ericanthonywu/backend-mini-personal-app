@@ -20,6 +20,8 @@ const transactionRepository = {
       dateFrom,
       dateTo,
       search,
+      sortBy = 'date',
+      sortOrder = 'desc',
       limit = 20,
       offset = 0,
     } = filters;
@@ -65,7 +67,9 @@ const transactionRepository = {
     const [{ count }] = await countQuery.count('t.id as count');
     const [{ sum }] = await sumQuery.sum('t.amount as sum');
 
+    const sortColumn = sortBy === 'amount' ? 't.amount' : 't.transaction_date';
     const data = await baseQuery
+      .orderBy(sortColumn, sortOrder)
       .orderBy('t.transaction_date', 'desc')
       .limit(limit)
       .offset(offset);

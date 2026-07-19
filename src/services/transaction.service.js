@@ -23,6 +23,8 @@ const transactionService = {
       dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
       dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
       search: filters.search,
+      sortBy: filters.sortBy || 'date',
+      sortOrder: filters.sortOrder || 'desc',
       limit,
       offset,
     };
