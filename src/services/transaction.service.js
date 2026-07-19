@@ -27,11 +27,12 @@ const transactionService = {
       offset,
     };
 
-    const { data, total } = await transactionRepository.findAll(parsed);
+    const { data, total, totalAmount } = await transactionRepository.findAll(parsed);
 
     return {
       data,
       total,
+      totalAmount,
       page,
       limit,
       totalPages: Math.ceil(total / limit),

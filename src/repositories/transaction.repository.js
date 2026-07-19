@@ -32,38 +32,49 @@ const transactionRepository = {
         'c.color as category_color'
       );
 
-    // Separate count query to avoid GROUP BY conflicts with SELECT *
+    // Separate count and sum queries to avoid GROUP BY conflicts with SELECT *
     const countQuery = db('transactions as t');
+    const sumQuery = db('transactions as t');
 
     if (categoryId !== undefined) {
       baseQuery.where('t.category_id', categoryId);
       countQuery.where('t.category_id', categoryId);
+      sumQuery.where('t.category_id', categoryId);
     }
     if (isIgnored !== undefined) {
       baseQuery.where('t.is_ignored', isIgnored);
       countQuery.where('t.is_ignored', isIgnored);
+      sumQuery.where('t.is_ignored', isIgnored);
     }
     if (dateFrom) {
       baseQuery.where('t.transaction_date', '>=', dateFrom);
       countQuery.where('t.transaction_date', '>=', dateFrom);
+      sumQuery.where('t.transaction_date', '>=', dateFrom);
     }
     if (dateTo) {
       baseQuery.where('t.transaction_date', '<=', dateTo);
       countQuery.where('t.transaction_date', '<=', dateTo);
+      sumQuery.where('t.transaction_date', '<=', dateTo);
     }
     if (search) {
       baseQuery.whereILike('t.merchant', `%${search}%`);
       countQuery.whereILike('t.merchant', `%${search}%`);
+      sumQuery.whereILike('t.merchant', `%${search}%`);
     }
 
     const [{ count }] = await countQuery.count('t.id as count');
+    const [{ sum }] = await sumQuery.sum('t.amount as sum');
 
     const data = await baseQuery
       .orderBy('t.transaction_date', 'desc')
       .limit(limit)
       .offset(offset);
 
-    return { data, total: parseInt(count, 10) };
+    return {
+      data,
+      total: parseInt(count, 10),
+      totalAmount: parseInt(sum || '0', 10),
+    };
   },
 
   /**
