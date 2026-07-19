@@ -152,24 +152,13 @@ const budgetService = {
   async getSpendingSummary(mode, year, month) {
     if (mode === 'week') {
       const rows = await transactionRepository.findWeeklyTotals(year, month);
-      // Build a map from existing data
-      const map = Object.fromEntries(rows.map((r) => [r.week, r]));
-
-      // Determine how many weeks in the month (at most 5)
-      const daysInMonth = new Date(year, month, 0).getDate();
-      const totalWeeks = Math.ceil(daysInMonth / 7);
-
-      const weeks = Array.from({ length: totalWeeks }, (_, i) => {
-        const w = i + 1;
-        return map[w] || { week: w, realSpent: 0, totalSpent: 0 };
-      });
 
       return {
         mode: 'week',
         year,
         month,
         budget: env.WEEKLY_BUDGET,
-        entries: weeks,
+        entries: rows, // already includes { week, startDate, endDate, realSpent, totalSpent }
       };
     }
 

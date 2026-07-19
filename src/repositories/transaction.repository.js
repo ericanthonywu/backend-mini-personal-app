@@ -204,32 +204,72 @@ const transactionRepository = {
   },
 
   /**
-   * Get spending totals grouped by week-of-month for a given year/month.
-   * Week 1 = days 1–7, Week 2 = 8–14, Week 3 = 15–21, Week 4 = 22–28, Week 5 = 29–end.
+   * Get spending totals grouped by calendar week (Mon–Sun) for a given year/month.
+   *
+   * Weeks are full Mon–Sun calendar weeks. The first week starts on the Monday
+   * on or before the 1st of the month, and the last week ends on the Sunday on
+   * or after the last day of the month — meaning weeks can span month boundaries.
+   * A cross-month week (e.g. Jul 27–Aug 2) will appear in both July and August
+   * with the same combined total, so the spending summary and transaction list
+   * always show the same numbers for any given week.
    *
    * @param {number} year
    * @param {number} month  1-indexed
-   * @returns {Promise<Array<{ week: number, realSpent: number, totalSpent: number }>>}
+   * @returns {Promise<Array<{ week: number, startDate: string, endDate: string, realSpent: number, totalSpent: number }>>}
    */
   async findWeeklyTotals(year, month) {
-    const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
-    const monthEnd   = new Date(year, month, 0, 23, 59, 59, 999);
+    // Build the Mon–Sun week boundaries that cover this month.
+    const firstDayOfMonth = new Date(year, month - 1, 1);
+    const lastDayOfMonth  = new Date(year, month, 0); // day 0 = last day of month
 
-    const rows = await db('transactions')
-      .whereBetween('transaction_date', [monthStart, monthEnd])
-      .select(
-        db.raw(`CEIL(EXTRACT(DAY FROM transaction_date) / 7.0)::int AS week_num`),
-        db.raw('SUM(amount) as total_spent'),
-        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
-      )
-      .groupByRaw(`CEIL(EXTRACT(DAY FROM transaction_date) / 7.0)::int`)
-      .orderBy('week_num', 'asc');
+    // Find the Monday on or before the 1st of the month
+    const firstDow = firstDayOfMonth.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    const daysToMonday = firstDow === 0 ? 6 : firstDow - 1;
+    const firstWeekStart = new Date(firstDayOfMonth);
+    firstWeekStart.setDate(firstDayOfMonth.getDate() - daysToMonday);
 
-    return rows.map((r) => ({
-      week: parseInt(r.week_num, 10),
-      realSpent: parseInt(r.real_spent || '0', 10),
-      totalSpent: parseInt(r.total_spent || '0', 10),
-    }));
+    const weeks = [];
+    let weekNum = 1;
+    let weekStart = new Date(firstWeekStart);
+    weekStart.setHours(0, 0, 0, 0);
+
+    // Generate weeks until the start is after the last day of the month
+    while (weekStart <= lastDayOfMonth) {
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+      weekEnd.setHours(23, 59, 59, 999);
+
+      weeks.push({
+        week: weekNum,
+        start: new Date(weekStart),
+        end: new Date(weekEnd),
+      });
+
+      weekNum++;
+      weekStart = new Date(weekStart);
+      weekStart.setDate(weekStart.getDate() + 7);
+    }
+
+    // Query each week separately so cross-month transactions are included
+    const results = await Promise.all(
+      weeks.map(async (w) => {
+        const [row] = await db('transactions')
+          .whereBetween('transaction_date', [w.start, w.end])
+          .select(
+            db.raw('SUM(amount) as total_spent'),
+            db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+          );
+        return {
+          week: w.week,
+          startDate: w.start.toISOString().split('T')[0],
+          endDate:   w.end.toISOString().split('T')[0],
+          realSpent:  parseInt(row.real_spent  || '0', 10),
+          totalSpent: parseInt(row.total_spent || '0', 10),
+        };
+      })
+    );
+
+    return results;
   },
 
   /**
