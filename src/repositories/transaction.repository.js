@@ -187,6 +187,62 @@ const transactionRepository = {
       totalSpent: parseInt(r.total_spent || '0', 10),
     }));
   },
+
+  /**
+   * Get spending totals grouped by week-of-month for a given year/month.
+   * Week 1 = days 1–7, Week 2 = 8–14, Week 3 = 15–21, Week 4 = 22–28, Week 5 = 29–end.
+   *
+   * @param {number} year
+   * @param {number} month  1-indexed
+   * @returns {Promise<Array<{ week: number, realSpent: number, totalSpent: number }>>}
+   */
+  async findWeeklyTotals(year, month) {
+    const monthStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const monthEnd   = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const rows = await db('transactions')
+      .whereBetween('transaction_date', [monthStart, monthEnd])
+      .select(
+        db.raw(`CEIL(EXTRACT(DAY FROM transaction_date) / 7.0)::int AS week_num`),
+        db.raw('SUM(amount) as total_spent'),
+        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+      )
+      .groupByRaw(`CEIL(EXTRACT(DAY FROM transaction_date) / 7.0)::int`)
+      .orderBy('week_num', 'asc');
+
+    return rows.map((r) => ({
+      week: parseInt(r.week_num, 10),
+      realSpent: parseInt(r.real_spent || '0', 10),
+      totalSpent: parseInt(r.total_spent || '0', 10),
+    }));
+  },
+
+  /**
+   * Get spending totals grouped by month for a given year.
+   *
+   * @param {number} year
+   * @returns {Promise<Array<{ month: number, realSpent: number, totalSpent: number }>>}
+   */
+  async findMonthlyTotals(year) {
+    const yearStart = new Date(year, 0, 1, 0, 0, 0, 0);
+    const yearEnd   = new Date(year, 11, 31, 23, 59, 59, 999);
+
+    const rows = await db('transactions')
+      .whereBetween('transaction_date', [yearStart, yearEnd])
+      .select(
+        db.raw('EXTRACT(MONTH FROM transaction_date)::int AS month_num'),
+        db.raw('SUM(amount) as total_spent'),
+        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+      )
+      .groupByRaw('EXTRACT(MONTH FROM transaction_date)::int')
+      .orderBy('month_num', 'asc');
+
+    return rows.map((r) => ({
+      month: parseInt(r.month_num, 10),
+      realSpent: parseInt(r.real_spent || '0', 10),
+      totalSpent: parseInt(r.total_spent || '0', 10),
+    }));
+  },
 };
 
 module.exports = transactionRepository;

@@ -140,6 +140,55 @@ const budgetService = {
       },
     };
   },
+
+  /**
+   * Returns per-week or per-month spending totals with budget status.
+   *
+   * @param {'week'|'month'} mode
+   * @param {number} year
+   * @param {number} [month]  1-indexed, required when mode === 'week'
+   * @returns {Promise<Object>}
+   */
+  async getSpendingSummary(mode, year, month) {
+    if (mode === 'week') {
+      const rows = await transactionRepository.findWeeklyTotals(year, month);
+      // Build a map from existing data
+      const map = Object.fromEntries(rows.map((r) => [r.week, r]));
+
+      // Determine how many weeks in the month (at most 5)
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const totalWeeks = Math.ceil(daysInMonth / 7);
+
+      const weeks = Array.from({ length: totalWeeks }, (_, i) => {
+        const w = i + 1;
+        return map[w] || { week: w, realSpent: 0, totalSpent: 0 };
+      });
+
+      return {
+        mode: 'week',
+        year,
+        month,
+        budget: env.WEEKLY_BUDGET,
+        entries: weeks,
+      };
+    }
+
+    // mode === 'month'
+    const rows = await transactionRepository.findMonthlyTotals(year);
+    const map = Object.fromEntries(rows.map((r) => [r.month, r]));
+
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const m = i + 1;
+      return map[m] || { month: m, realSpent: 0, totalSpent: 0 };
+    });
+
+    return {
+      mode: 'month',
+      year,
+      budget: env.MONTHLY_BUDGET,
+      entries: months,
+    };
+  },
 };
 
 module.exports = budgetService;
