@@ -8,6 +8,7 @@ const pollController = require('../controllers/poll.controller');
 const transactionController = require('../controllers/transaction.controller');
 const categoryController = require('../controllers/category.controller');
 const budgetController = require('../controllers/budget.controller');
+const alertController = require('../controllers/alert.controller');
 
 const router = Router();
 
@@ -40,5 +41,11 @@ router.delete('/merchant-rules/:id', categoryController.deleteRule);
 // Budget
 router.get('/budget/chart', budgetController.getChart);
 router.get('/budget', budgetController.getSummary);
+
+// Alerts
+router.get('/alerts/count', alertController.count);      // lightweight — widget badge
+router.get('/alerts', alertController.list);
+router.patch('/alerts/:id/resolve', alertController.resolve);
+router.post('/alerts/resolve-all', alertController.resolveAll);
 
 module.exports = router;

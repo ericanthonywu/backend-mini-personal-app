@@ -86,7 +86,9 @@ function parseBcaEmail(html) {
     console.warn(`[email-parser] ❌ Parse failed — missing fields: [${missing.join(', ')}]`);
     console.warn(`[email-parser]    Fields found: ${JSON.stringify(fields, null, 2)}`);
     console.warn(`[email-parser]    HTML snippet (first 500 chars): ${html.substring(0, 500)}`);
-    return null;
+
+    // Return structured failure so callers can capture missingFields for the alert
+    return { error: true, missingFields: missing };
   }
 
   const transactionDate = parseBcaDate(rawDate);

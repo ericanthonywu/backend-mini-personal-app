@@ -5,6 +5,7 @@ const { simpleParser } = require('mailparser');
 const { parseBcaEmail } = require('../utils/email-parser.util');
 const transactionRepository = require('../repositories/transaction.repository');
 const merchantRuleRepository = require('../repositories/merchant-rule.repository');
+const alertService = require('./alert.service');
 
 const BCA_SENDER = 'kartukredit@klikbca.com';
 const BCA_SENDER_ALT = 'KartuKreditBCA@klikbca.com';
@@ -29,8 +30,23 @@ const emailParserService = {
 
     for (const email of emails) {
       const parsed = parseBcaEmail(email.html || email.textAsHtml || '');
-      if (!parsed) {
+
+      // parsed is null (date/amount parse failure) or { error, missingFields } (missing fields)
+      if (!parsed || parsed.error) {
         console.warn(`[email-parser] Could not parse email: ${email.messageId}`);
+
+        // Persist a parse-failure alert so the mobile app can surface it to the user.
+        // Wrapped in try-catch — alert DB failure must never break email processing.
+        try {
+          await alertService.createParseFailureAlert({
+            emailMessageId: email.messageId,
+            htmlSnippet: (email.html || email.textAsHtml || '').substring(0, 1000),
+            missingFields: parsed?.missingFields || [],
+          });
+        } catch (alertErr) {
+          console.error('[email-parser] Failed to persist parse-failure alert:', alertErr.message);
+        }
+
         skipped++;
         continue;
       }
