@@ -199,6 +199,65 @@ const budgetService = {
       topTransactions: result.topTransactions,
     };
   },
+
+  /**
+   * Returns daily spending totals for a specific week of a given month & year.
+   *
+   * @param {number} year
+   * @param {number} month (1-indexed)
+   * @param {number} [weekNum] 1-indexed (optional, defaults to current/first week)
+   * @returns {Promise<Object>}
+   */
+  async getDailyChartData(year, month, weekNum) {
+    const weeklyTotals = await transactionRepository.findWeeklyTotals(year, month);
+    if (!weeklyTotals || weeklyTotals.length === 0) {
+      return {
+        year,
+        month,
+        week: 1,
+        startDate: '',
+        endDate: '',
+        budget: env.WEEKLY_BUDGET,
+        availableWeeks: [],
+        days: [],
+      };
+    }
+
+    // Default to target week or closest matching week
+    const targetWeek = weeklyTotals.find((w) => w.week === parseInt(weekNum, 10)) || weeklyTotals[0];
+
+    const weekStart = moment.tz(targetWeek.startDate, TZ).startOf('day').toDate();
+    const weekEnd   = moment.tz(targetWeek.endDate,   TZ).endOf('day').toDate();
+
+    const dailyRows = await transactionRepository.findDailyTotals(weekStart, weekEnd);
+    const dailyMap  = Object.fromEntries(dailyRows.map((r) => [r.date, r]));
+
+    const days = [];
+    const cur  = moment.tz(weekStart, TZ).startOf('day');
+    const last = moment.tz(weekEnd,   TZ).startOf('day');
+
+    while (cur.isSameOrBefore(last)) {
+      const dateStr = cur.format('YYYY-MM-DD');
+      days.push(dailyMap[dateStr] || { date: dateStr, realSpent: 0, totalSpent: 0 });
+      cur.add(1, 'day');
+    }
+
+    return {
+      year,
+      month,
+      week: targetWeek.week,
+      startDate: targetWeek.startDate,
+      endDate: targetWeek.endDate,
+      budget: env.WEEKLY_BUDGET,
+      availableWeeks: weeklyTotals.map((w) => ({
+        week: w.week,
+        startDate: w.startDate,
+        endDate: w.endDate,
+        realSpent: w.realSpent,
+      })),
+      days,
+    };
+  },
 };
 
 module.exports = budgetService;

@@ -73,6 +73,23 @@ const budgetController = {
       next(err);
     }
   },
+  /**
+   * GET /api/budget/daily-chart
+   * Query params: year, month, week
+   */
+  async getDailyChart(req, res, next) {
+    try {
+      const now = new Date();
+      const year = parseInt(req.query.year || now.getFullYear(), 10);
+      const month = parseInt(req.query.month || (now.getMonth() + 1), 10);
+      const week = req.query.week ? parseInt(req.query.week, 10) : undefined;
+
+      const data = await budgetService.getDailyChartData(year, month, week);
+      return res.status(200).json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
 };
 
 module.exports = budgetController;
