@@ -23,9 +23,11 @@ router.post('/poll', pollController.trigger);
 
 // Transactions
 router.get('/transactions', transactionController.list);
+router.post('/transactions', ...transactionController.create);
 router.get('/transactions/recent', transactionController.recent);
 router.get('/transactions/:id', transactionController.getById);
 router.patch('/transactions/:id', ...transactionController.update);
+router.delete('/transactions/:id', transactionController.delete);
 
 // Categories
 router.get('/categories', categoryController.list);

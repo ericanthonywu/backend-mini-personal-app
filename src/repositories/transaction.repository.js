@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const moment = require('moment-timezone');
 const db     = require('../config/database');
 
@@ -133,6 +134,34 @@ const transactionRepository = {
   },
 
   /**
+   * Insert a manually-entered transaction.
+   *
+   * Manual entries have no source email, so we synthesize a unique
+   * email_message_id (the column is NOT NULL + UNIQUE) with a `manual:` prefix.
+   *
+   * @param {{ amount: number, transactionDate: Date, merchant: string, transactionType?: string, notes?: string, categoryId?: string, isIgnored?: boolean }} data
+   * @returns {Promise<Object>} - inserted row
+   */
+  async create(data) {
+    const now = new Date();
+    const [row] = await db('transactions')
+      .insert({
+        amount: data.amount,
+        transaction_date: data.transactionDate,
+        merchant: data.merchant,
+        transaction_type: data.transactionType || 'Manual',
+        notes: data.notes || '',
+        category_id: data.categoryId || null,
+        is_ignored: data.isIgnored || false,
+        email_message_id: `manual:${crypto.randomUUID()}`,
+        created_at: now,
+        updated_at: now,
+      })
+      .returning('*');
+    return row;
+  },
+
+  /**
    * @param {string} id
    * @param {{ categoryId?: string, isIgnored?: boolean }} data
    * @returns {Promise<Object|undefined>}
@@ -145,6 +174,16 @@ const transactionRepository = {
 
     const [row] = await db('transactions').where({ id }).update(updates).returning('*');
     return row;
+  },
+
+  /**
+   * Permanently delete a transaction.
+   *
+   * @param {string} id
+   * @returns {Promise<number>} - number of deleted rows
+   */
+  async delete(id) {
+    return db('transactions').where({ id }).delete();
   },
 
   /**

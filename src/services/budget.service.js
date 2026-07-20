@@ -116,11 +116,16 @@ const budgetService = {
     const monthMap = toMap(monthRows);
 
     // Iterate day-by-day in WIB and fill gaps with zeros.
-    // moment.tz clones avoid mutating the original boundary moments.
+    // Only include days up to today — future days are excluded so that the
+    // cumulative line stops at the current day instead of extending flat to
+    // the end of the period (e.g. Sunday).
+    const today = nowWIB().startOf('day');
+
     const fillDays = (start, end, map) => {
       const days = [];
       const cur  = moment.tz(start, TZ).startOf('day');
-      const last = moment.tz(end,   TZ).startOf('day');
+      // Cap at today so we don't plot future zero-spending days
+      const last = moment.min(moment.tz(end, TZ).startOf('day'), today);
 
       while (cur.isSameOrBefore(last)) {
         const dateStr = cur.format('YYYY-MM-DD');

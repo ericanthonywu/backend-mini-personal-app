@@ -53,6 +53,52 @@ const transactionService = {
   },
 
   /**
+   * Create a manually-entered transaction.
+   *
+   * @param {{ amount: number, transactionDate: string|Date, merchant: string, transactionType?: string, notes?: string, categoryId?: string, isIgnored?: boolean }} data
+   * @returns {Promise<Object>}
+   * @throws {AppError} 400 if categoryId references a non-existent category
+   */
+  async create(data) {
+    if (data.categoryId) {
+      const cat = await categoryRepository.findById(data.categoryId);
+      if (!cat) throw new AppError('Category not found', 400);
+    }
+
+    const merchant = data.merchant.trim();
+    const transactionType = data.transactionType || 'Manual';
+    // Mirror the email-parsed convention: "MERCHANT - TRANSACTION_TYPE"
+    const notes = data.notes && data.notes.trim()
+      ? data.notes.trim()
+      : `${merchant} - ${transactionType}`;
+
+    const created = await transactionRepository.create({
+      amount: data.amount,
+      transactionDate: new Date(data.transactionDate),
+      merchant,
+      transactionType,
+      notes,
+      categoryId: data.categoryId,
+      isIgnored: data.isIgnored,
+    });
+
+    // Return the joined row so the response includes category name/color.
+    return transactionRepository.findById(created.id);
+  },
+
+  /**
+   * Permanently delete a transaction.
+   *
+   * @param {string} id
+   * @throws {AppError} 404 if transaction not found
+   */
+  async delete(id) {
+    const tx = await transactionRepository.findById(id);
+    if (!tx) throw new AppError('Transaction not found', 404);
+    await transactionRepository.delete(id);
+  },
+
+  /**
    * Update a transaction's category or ignored status.
    *
    * @param {string} id

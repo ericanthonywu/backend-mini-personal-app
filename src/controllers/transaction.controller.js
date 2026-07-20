@@ -4,6 +4,16 @@ const Joi = require('joi');
 const transactionService = require('../services/transaction.service');
 const validate = require('../middlewares/validator');
 
+const createSchema = Joi.object({
+  amount: Joi.number().integer().min(0).required(),
+  transactionDate: Joi.date().iso().required(),
+  merchant: Joi.string().min(1).max(255).required(),
+  transactionType: Joi.string().max(100).optional(),
+  notes: Joi.string().max(1000).allow('').optional(),
+  categoryId: Joi.string().uuid().allow(null).optional(),
+  isIgnored: Joi.boolean().optional(),
+});
+
 const updateSchema = Joi.object({
   categoryId: Joi.string().uuid().allow(null).optional(),
   isIgnored: Joi.boolean().optional(),
@@ -44,6 +54,34 @@ const transactionController = {
     try {
       const tx = await transactionService.getById(req.params.id);
       return res.status(200).json(tx);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
+   * POST /api/transactions
+   * Body: { amount, transactionDate, merchant, transactionType?, notes?, categoryId?, isIgnored? }
+   */
+  create: [
+    validate(createSchema),
+    async (req, res, next) => {
+      try {
+        const tx = await transactionService.create(req.body);
+        return res.status(201).json(tx);
+      } catch (err) {
+        next(err);
+      }
+    },
+  ],
+
+  /**
+   * DELETE /api/transactions/:id
+   */
+  async delete(req, res, next) {
+    try {
+      await transactionService.delete(req.params.id);
+      return res.status(204).send();
     } catch (err) {
       next(err);
     }
