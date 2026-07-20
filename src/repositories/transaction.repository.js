@@ -1,6 +1,9 @@
 'use strict';
 
-const db = require('../config/database');
+const moment = require('moment-timezone');
+const db     = require('../config/database');
+
+const TZ = 'Asia/Jakarta'; // WIB (UTC+7)
 
 /**
  * Transaction Repository — all DB access for transactions.
@@ -186,19 +189,23 @@ const transactionRepository = {
    * @returns {Promise<Array<{ date: string, realSpent: number, totalSpent: number }>>}
    */
   async findDailyTotals(dateFrom, dateTo) {
+    // Use WIB timezone for DATE extraction so that transactions that occur
+    // in the evening (e.g. 18:00 UTC = midnight+1 WIB) are grouped to the
+    // correct WIB calendar day.
     const rows = await db('transactions')
       .whereBetween('transaction_date', [dateFrom, dateTo])
       .select(
-        db.raw('DATE(transaction_date) as date'),
+        db.raw(`DATE(transaction_date AT TIME ZONE 'Asia/Jakarta') as date`),
         db.raw('SUM(amount) as total_spent'),
         db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
       )
-      .groupByRaw('DATE(transaction_date)')
+      .groupByRaw(`DATE(transaction_date AT TIME ZONE 'Asia/Jakarta')`)
       .orderBy('date', 'asc');
 
     return rows.map((r) => ({
-      date: r.date instanceof Date ? r.date.toISOString().split('T')[0] : String(r.date),
-      realSpent: parseInt(r.real_spent || '0', 10),
+      // moment parses the raw date value and formats it cleanly in WIB.
+      date: moment.tz(r.date, TZ).format('YYYY-MM-DD'),
+      realSpent:  parseInt(r.real_spent  || '0', 10),
       totalSpent: parseInt(r.total_spent || '0', 10),
     }));
   },
@@ -259,10 +266,11 @@ const transactionRepository = {
             db.raw('SUM(amount) as total_spent'),
             db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
           );
+        // Format dates in WIB using moment-timezone.
         return {
           week: w.week,
-          startDate: w.start.toISOString().split('T')[0],
-          endDate:   w.end.toISOString().split('T')[0],
+          startDate: moment.tz(w.start, TZ).format('YYYY-MM-DD'),
+          endDate:   moment.tz(w.end,   TZ).format('YYYY-MM-DD'),
           realSpent:  parseInt(row.real_spent  || '0', 10),
           totalSpent: parseInt(row.total_spent || '0', 10),
         };
@@ -297,6 +305,53 @@ const transactionRepository = {
       realSpent: parseInt(r.real_spent || '0', 10),
       totalSpent: parseInt(r.total_spent || '0', 10),
     }));
+  },
+
+  /**
+   * Get today's spending totals and top N most expensive non-ignored transactions.
+   *
+   * @param {Date} dateFrom  — start of today (WIB midnight)
+   * @param {Date} dateTo    — end of today (WIB 23:59:59)
+   * @param {number} [limit] — max transactions to return (default 5)
+   * @returns {Promise<{ totalSpent: number, realSpent: number, topTransactions: Array }>}
+   */
+  async findDailySummary(dateFrom, dateTo, limit = 5) {
+    const [totalsRow] = await db('transactions')
+      .whereBetween('transaction_date', [dateFrom, dateTo])
+      .select(
+        db.raw('SUM(amount) as total_spent'),
+        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+      );
+
+    const topRows = await db('transactions as t')
+      .leftJoin('categories as c', 't.category_id', 'c.id')
+      .whereBetween('t.transaction_date', [dateFrom, dateTo])
+      .where('t.is_ignored', false)
+      .select(
+        't.id',
+        't.merchant',
+        't.amount',
+        't.transaction_date',
+        't.notes',
+        'c.name as category_name',
+        'c.color as category_color'
+      )
+      .orderBy('t.amount', 'desc')
+      .limit(limit);
+
+    return {
+      totalSpent: parseInt(totalsRow.total_spent || '0', 10),
+      realSpent:  parseInt(totalsRow.real_spent  || '0', 10),
+      topTransactions: topRows.map((r) => ({
+        id:              r.id,
+        merchant:        r.merchant,
+        amount:          parseInt(r.amount, 10),
+        transactionDate: r.transaction_date,
+        notes:           r.notes || '',
+        categoryName:    r.category_name  || null,
+        categoryColor:   r.category_color || null,
+      })),
+    };
   },
 };
 

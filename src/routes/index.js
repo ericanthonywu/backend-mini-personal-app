@@ -41,6 +41,7 @@ router.delete('/merchant-rules/:id', categoryController.deleteRule);
 // Budget
 router.get('/budget/chart', budgetController.getChart);
 router.get('/budget/spending-summary', budgetController.getSpendingSummary);
+router.get('/budget/daily-summary', budgetController.getDailySummary);
 router.get('/budget', budgetController.getSummary);
 
 // Alerts

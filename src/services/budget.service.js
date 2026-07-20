@@ -1,7 +1,19 @@
 'use strict';
 
+const moment = require('moment-timezone');
 const transactionRepository = require('../repositories/transaction.repository');
 const env = require('../config/env');
+
+const TZ = 'Asia/Jakarta'; // WIB (UTC+7)
+
+/**
+ * Get the current moment in WIB.
+ *
+ * @returns {moment.Moment}
+ */
+function nowWIB() {
+  return moment().tz(TZ);
+}
 
 /**
  * Budget Service — calculates budget consumption.
@@ -10,6 +22,9 @@ const env = require('../config/env');
  *   - "Real" expenses: transactions where is_ignored = false
  *   - "Total" expenses: all transactions regardless of is_ignored
  *   - Budget limits come from env: WEEKLY_BUDGET, MONTHLY_BUDGET
+ *
+ * All date boundaries are computed in WIB (Asia/Jakarta).
+ * The DB column `transaction_date` stores naive WIB timestamps.
  */
 const budgetService = {
   /**
@@ -21,19 +36,12 @@ const budgetService = {
    * @returns {Promise<Object>}
    */
   async getSummary() {
-    const now = new Date();
+    const { weekStart, weekEnd } = budgetService.getCurrentWeekRange();
+    const { monthStart, monthEnd } = budgetService.getCurrentMonthRange();
 
-    const { weekStart, weekEnd } = budgetService.getCurrentWeekRange(now);
-    const { monthStart, monthEnd } = budgetService.getCurrentMonthRange(now);
-
-    const [
-      weekReal,
-      weekTotal,
-      monthReal,
-      monthTotal,
-    ] = await Promise.all([
-      transactionRepository.sumAmount(weekStart, weekEnd, true),   // exclude ignored
-      transactionRepository.sumAmount(weekStart, weekEnd, false),  // include ignored
+    const [weekReal, weekTotal, monthReal, monthTotal] = await Promise.all([
+      transactionRepository.sumAmount(weekStart, weekEnd, true),
+      transactionRepository.sumAmount(weekStart, weekEnd, false),
       transactionRepository.sumAmount(monthStart, monthEnd, true),
       transactionRepository.sumAmount(monthStart, monthEnd, false),
     ]);
@@ -63,37 +71,28 @@ const budgetService = {
   },
 
   /**
-   * Returns the Monday–Sunday range for the week containing the given date.
-   * All times in WIB (no UTC adjustment needed).
+   * Returns the Monday–Sunday boundaries of the current WIB week.
    *
-   * @param {Date} date
+   * moment's isoWeek starts on Monday (ISO 8601), so startOf('isoWeek')
+   * gives Monday 00:00:00 and endOf('isoWeek') gives Sunday 23:59:59 — all
+   * in WIB — which we then convert to plain JS Dates for DB queries.
+   *
    * @returns {{ weekStart: Date, weekEnd: Date }}
    */
-  getCurrentWeekRange(date) {
-    const d = new Date(date);
-    const day = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-    const daysToMonday = day === 0 ? 6 : day - 1;
-
-    const weekStart = new Date(d);
-    weekStart.setDate(d.getDate() - daysToMonday);
-    weekStart.setHours(0, 0, 0, 0);
-
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
-
+  getCurrentWeekRange() {
+    const weekStart = nowWIB().startOf('isoWeek').toDate();
+    const weekEnd   = nowWIB().endOf('isoWeek').toDate();
     return { weekStart, weekEnd };
   },
 
   /**
-   * Returns the first–last day range for the month containing the given date.
+   * Returns the first–last day boundaries of the current WIB month.
    *
-   * @param {Date} date
    * @returns {{ monthStart: Date, monthEnd: Date }}
    */
-  getCurrentMonthRange(date) {
-    const monthStart = new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0, 0);
-    const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+  getCurrentMonthRange() {
+    const monthStart = nowWIB().startOf('month').toDate();
+    const monthEnd   = nowWIB().endOf('month').toDate();
     return { monthStart, monthEnd };
   },
 
@@ -103,28 +102,30 @@ const budgetService = {
    * @returns {Promise<Object>}
    */
   async getChartData() {
-    const now = new Date();
-    const { weekStart, weekEnd } = budgetService.getCurrentWeekRange(now);
-    const { monthStart, monthEnd } = budgetService.getCurrentMonthRange(now);
+    const { weekStart, weekEnd }   = budgetService.getCurrentWeekRange();
+    const { monthStart, monthEnd } = budgetService.getCurrentMonthRange();
 
     const [weekRows, monthRows] = await Promise.all([
       transactionRepository.findDailyTotals(weekStart, weekEnd),
       transactionRepository.findDailyTotals(monthStart, monthEnd),
     ]);
 
-    // Build a map for quick lookup
+    // Build a map for quick lookup by 'YYYY-MM-DD' key (WIB date)
     const toMap = (rows) => Object.fromEntries(rows.map((r) => [r.date, r]));
-    const weekMap = toMap(weekRows);
+    const weekMap  = toMap(weekRows);
     const monthMap = toMap(monthRows);
 
-    // Generate all days in range and fill gaps with zeros
+    // Iterate day-by-day in WIB and fill gaps with zeros.
+    // moment.tz clones avoid mutating the original boundary moments.
     const fillDays = (start, end, map) => {
       const days = [];
-      const cur = new Date(start);
-      while (cur <= end) {
-        const dateStr = cur.toISOString().split('T')[0];
+      const cur  = moment.tz(start, TZ).startOf('day');
+      const last = moment.tz(end,   TZ).startOf('day');
+
+      while (cur.isSameOrBefore(last)) {
+        const dateStr = cur.format('YYYY-MM-DD');
         days.push(map[dateStr] || { date: dateStr, realSpent: 0, totalSpent: 0 });
-        cur.setDate(cur.getDate() + 1);
+        cur.add(1, 'day');
       }
       return days;
     };
@@ -152,19 +153,18 @@ const budgetService = {
   async getSpendingSummary(mode, year, month) {
     if (mode === 'week') {
       const rows = await transactionRepository.findWeeklyTotals(year, month);
-
       return {
         mode: 'week',
         year,
         month,
         budget: env.WEEKLY_BUDGET,
-        entries: rows, // already includes { week, startDate, endDate, realSpent, totalSpent }
+        entries: rows, // { week, startDate, endDate, realSpent, totalSpent }
       };
     }
 
     // mode === 'month'
     const rows = await transactionRepository.findMonthlyTotals(year);
-    const map = Object.fromEntries(rows.map((r) => [r.month, r]));
+    const map  = Object.fromEntries(rows.map((r) => [r.month, r]));
 
     const months = Array.from({ length: 12 }, (_, i) => {
       const m = i + 1;
@@ -176,6 +176,27 @@ const budgetService = {
       year,
       budget: env.MONTHLY_BUDGET,
       entries: months,
+    };
+  },
+
+  /**
+   * Returns today's (WIB) spending summary with top 5 most expensive
+   * non-ignored transactions.
+   *
+   * @returns {Promise<Object>}
+   */
+  async getDailySummary() {
+    const today      = nowWIB();
+    const todayStart = today.clone().startOf('day').toDate();
+    const todayEnd   = today.clone().endOf('day').toDate();
+
+    const result = await transactionRepository.findDailySummary(todayStart, todayEnd);
+
+    return {
+      date: today.format('YYYY-MM-DD'),
+      totalSpent: result.totalSpent,
+      realSpent:  result.realSpent,
+      topTransactions: result.topTransactions,
     };
   },
 };

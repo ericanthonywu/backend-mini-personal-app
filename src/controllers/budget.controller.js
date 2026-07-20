@@ -61,6 +61,18 @@ const budgetController = {
       next(err);
     }
   },
+  /**
+   * GET /api/budget/daily-summary
+   * Returns today's (WIB) spending total and top 5 most expensive transactions.
+   */
+  async getDailySummary(req, res, next) {
+    try {
+      const data = await budgetService.getDailySummary();
+      return res.status(200).json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
 };
 
 module.exports = budgetController;
