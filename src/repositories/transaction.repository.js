@@ -70,22 +70,6 @@ const transactionRepository = {
       sumQuery.whereILike('t.merchant', `%${search}%`);
     }
 
-    const hasFilter = Boolean(
-      categoryId !== undefined ||
-      isIgnored !== undefined ||
-      dateFrom ||
-      dateTo ||
-      search
-    );
-
-    const [{ count }] = await countQuery.count('t.id as count');
-
-    let totalAmount = 0;
-    if (hasFilter) {
-      const [{ sum }] = await sumQuery.sum('t.amount as sum');
-      totalAmount = parseInt(sum || '0', 10);
-    }
-
     const sortColumn = sortBy === 'amount' ? 't.amount' : 't.transaction_date';
     const data = await baseQuery
       .orderBy(sortColumn, sortOrder)
@@ -93,9 +77,23 @@ const transactionRepository = {
       .limit(limit)
       .offset(offset);
 
+    const hasDateFilter = Boolean(dateFrom || dateTo);
+
+    let total = 0;
+    let totalAmount = 0;
+
+    if (hasDateFilter) {
+      const [{ count }] = await countQuery.count('t.id as count');
+      const [{ sum }] = await sumQuery.sum('t.amount as sum');
+      total = parseInt(count, 10);
+      totalAmount = parseInt(sum || '0', 10);
+    } else {
+      total = offset + data.length + (data.length === limit ? 1 : 0);
+    }
+
     return {
       data,
-      total: parseInt(count, 10),
+      total,
       totalAmount,
     };
   },
