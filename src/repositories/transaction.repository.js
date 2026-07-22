@@ -51,6 +51,8 @@ const transactionRepository = {
       baseQuery.where('t.is_ignored', isIgnored);
       countQuery.where('t.is_ignored', isIgnored);
       sumQuery.where('t.is_ignored', isIgnored);
+    } else {
+      sumQuery.where('t.is_ignored', false);
     }
     if (dateFrom) {
       baseQuery.where('t.transaction_date', '>=', dateFrom);
@@ -68,8 +70,21 @@ const transactionRepository = {
       sumQuery.whereILike('t.merchant', `%${search}%`);
     }
 
+    const hasFilter = Boolean(
+      categoryId !== undefined ||
+      isIgnored !== undefined ||
+      dateFrom ||
+      dateTo ||
+      search
+    );
+
     const [{ count }] = await countQuery.count('t.id as count');
-    const [{ sum }] = await sumQuery.sum('t.amount as sum');
+
+    let totalAmount = 0;
+    if (hasFilter) {
+      const [{ sum }] = await sumQuery.sum('t.amount as sum');
+      totalAmount = parseInt(sum || '0', 10);
+    }
 
     const sortColumn = sortBy === 'amount' ? 't.amount' : 't.transaction_date';
     const data = await baseQuery
@@ -81,7 +96,7 @@ const transactionRepository = {
     return {
       data,
       total: parseInt(count, 10),
-      totalAmount: parseInt(sum || '0', 10),
+      totalAmount,
     };
   },
 
