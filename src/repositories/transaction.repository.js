@@ -246,10 +246,11 @@ const transactionRepository = {
     // correct WIB calendar day.
     const rows = await db('transactions')
       .whereBetween('transaction_date', [dateFrom, dateTo])
+      .where('is_ignored', false)
       .select(
         db.raw(`DATE(transaction_date AT TIME ZONE 'Asia/Jakarta') as date`),
         db.raw('SUM(amount) as total_spent'),
-        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+        db.raw('SUM(amount) as real_spent')
       )
       .groupByRaw(`DATE(transaction_date AT TIME ZONE 'Asia/Jakarta')`)
       .orderBy('date', 'asc');
@@ -277,36 +278,31 @@ const transactionRepository = {
    * @returns {Promise<Array<{ week: number, startDate: string, endDate: string, realSpent: number, totalSpent: number }>>}
    */
   async findWeeklyTotals(year, month) {
-    // Build the Mon–Sun week boundaries that cover this month.
-    const firstDayOfMonth = new Date(year, month - 1, 1);
-    const lastDayOfMonth  = new Date(year, month, 0); // day 0 = last day of month
+    // Build the Mon–Sun week boundaries that cover this month in WIB (Asia/Jakarta).
+    const monthStr = String(month).padStart(2, '0');
+    const firstDayOfMonth = moment.tz(`${year}-${monthStr}-01`, 'YYYY-MM-DD', TZ).startOf('day');
+    const lastDayOfMonth  = firstDayOfMonth.clone().endOf('month').endOf('day');
 
-    // Find the Monday on or before the 1st of the month
-    const firstDow = firstDayOfMonth.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-    const daysToMonday = firstDow === 0 ? 6 : firstDow - 1;
-    const firstWeekStart = new Date(firstDayOfMonth);
-    firstWeekStart.setDate(firstDayOfMonth.getDate() - daysToMonday);
+    // Find the Monday on or before the 1st of the month (isoWeekday: 1=Mon, 7=Sun)
+    const firstWeekStart = firstDayOfMonth.clone().startOf('isoWeek');
 
     const weeks = [];
     let weekNum = 1;
-    let weekStart = new Date(firstWeekStart);
-    weekStart.setHours(0, 0, 0, 0);
+    let curWeekStart = firstWeekStart.clone();
 
-    // Generate weeks until the start is after the last day of the month
-    while (weekStart <= lastDayOfMonth) {
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6);
-      weekEnd.setHours(23, 59, 59, 999);
+    while (curWeekStart.isSameOrBefore(lastDayOfMonth)) {
+      const curWeekEnd = curWeekStart.clone().endOf('isoWeek').endOf('day');
 
       weeks.push({
         week: weekNum,
-        start: new Date(weekStart),
-        end: new Date(weekEnd),
+        start: curWeekStart.toDate(),
+        end: curWeekEnd.toDate(),
+        startDateStr: curWeekStart.format('YYYY-MM-DD'),
+        endDateStr:   curWeekEnd.format('YYYY-MM-DD'),
       });
 
       weekNum++;
-      weekStart = new Date(weekStart);
-      weekStart.setDate(weekStart.getDate() + 7);
+      curWeekStart.add(1, 'week');
     }
 
     // Query each week separately so cross-month transactions are included
@@ -314,15 +310,15 @@ const transactionRepository = {
       weeks.map(async (w) => {
         const [row] = await db('transactions')
           .whereBetween('transaction_date', [w.start, w.end])
+          .where('is_ignored', false)
           .select(
             db.raw('SUM(amount) as total_spent'),
-            db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+            db.raw('SUM(amount) as real_spent')
           );
-        // Format dates in WIB using moment-timezone.
         return {
           week: w.week,
-          startDate: moment.tz(w.start, TZ).format('YYYY-MM-DD'),
-          endDate:   moment.tz(w.end,   TZ).format('YYYY-MM-DD'),
+          startDate: w.startDateStr,
+          endDate:   w.endDateStr,
           realSpent:  parseInt(row.real_spent  || '0', 10),
           totalSpent: parseInt(row.total_spent || '0', 10),
         };
@@ -339,17 +335,18 @@ const transactionRepository = {
    * @returns {Promise<Array<{ month: number, realSpent: number, totalSpent: number }>>}
    */
   async findMonthlyTotals(year) {
-    const yearStart = new Date(year, 0, 1, 0, 0, 0, 0);
-    const yearEnd   = new Date(year, 11, 31, 23, 59, 59, 999);
+    const yearStart = moment.tz(`${year}-01-01 00:00:00`, 'YYYY-MM-DD HH:mm:ss', TZ).toDate();
+    const yearEnd   = moment.tz(`${year}-12-31 23:59:59.999`, 'YYYY-MM-DD HH:mm:ss.SSS', TZ).toDate();
 
     const rows = await db('transactions')
       .whereBetween('transaction_date', [yearStart, yearEnd])
+      .where('is_ignored', false)
       .select(
-        db.raw('EXTRACT(MONTH FROM transaction_date)::int AS month_num'),
+        db.raw(`EXTRACT(MONTH FROM (transaction_date AT TIME ZONE 'Asia/Jakarta'))::int AS month_num`),
         db.raw('SUM(amount) as total_spent'),
-        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+        db.raw('SUM(amount) as real_spent')
       )
-      .groupByRaw('EXTRACT(MONTH FROM transaction_date)::int')
+      .groupByRaw(`EXTRACT(MONTH FROM (transaction_date AT TIME ZONE 'Asia/Jakarta'))::int`)
       .orderBy('month_num', 'asc');
 
     return rows.map((r) => ({
@@ -370,6 +367,7 @@ const transactionRepository = {
   async findDailySummary(dateFrom, dateTo, limit = 5) {
     const [totalsRow] = await db('transactions')
       .whereBetween('transaction_date', [dateFrom, dateTo])
+      .where('is_ignored', false)
       .select(
         db.raw('SUM(amount) as total_spent'),
         db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
