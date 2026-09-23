@@ -77,3 +77,47 @@ exports.resolveAll = async () => {
     .where('is_resolved', false)
     .update({ is_resolved: true, resolved_at: now, updated_at: now });
 };
+
+/**
+ * Find unresolved alerts filtered by type.
+ *
+ * @param {string} type
+ * @returns {Promise<Array>}
+ */
+exports.findUnresolvedByType = async (type) =>
+  db('alerts')
+    .where({ is_resolved: false, type })
+    .orderBy('created_at', 'desc');
+
+/**
+ * Update message and metadata on an existing alert.
+ *
+ * @param {string} id
+ * @param {{ message: string, metadata?: object }} data
+ * @returns {Promise<Object|undefined>}
+ */
+exports.updateMessage = async (id, { message, metadata }) => {
+  const now = new Date();
+  const [row] = await db('alerts')
+    .where({ id })
+    .update({
+      message,
+      metadata: JSON.stringify(metadata || {}),
+      updated_at: now,
+    })
+    .returning('*');
+  return row;
+};
+
+/**
+ * Mark all unresolved alerts of a specific type as resolved.
+ *
+ * @param {string} type
+ * @returns {Promise<number>} number of rows updated
+ */
+exports.resolveByType = async (type) => {
+  const now = new Date();
+  return db('alerts')
+    .where({ is_resolved: false, type })
+    .update({ is_resolved: true, resolved_at: now, updated_at: now });
+};

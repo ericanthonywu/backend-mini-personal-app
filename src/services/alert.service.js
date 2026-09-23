@@ -67,3 +67,46 @@ exports.resolveAlert = async (id) => {
  * @returns {Promise<number>} number of alerts resolved
  */
 exports.resolveAll = async () => alertRepository.resolveAll();
+
+/**
+ * Create or update a poll-failure alert when email polling or connection fails.
+ * Deduplicates active poll_failure alerts to prevent alert spam.
+ *
+ * @param {{ error?: string, details?: object }} data
+ * @returns {Promise<Object>}
+ */
+exports.createPollFailureAlert = async ({ error, details } = {}) => {
+  const message = error || 'Gagal memeriksa email transaksi BCA. Cek koneksi internet atau kredensial.';
+  const existing = await alertRepository.findUnresolvedByType('poll_failure');
+
+  if (existing && existing.length > 0) {
+    // Update the message and timestamp of the existing active alert
+    return alertRepository.updateMessage(existing[0].id, {
+      message,
+      metadata: {
+        ...(existing[0].metadata || {}),
+        lastFailedAt: new Date().toISOString(),
+        details: details || {},
+      },
+    });
+  }
+
+  return alertRepository.create({
+    type: 'poll_failure',
+    title: 'Gagal Memeriksa Email',
+    message,
+    metadata: {
+      details: details || {},
+      occurredAt: new Date().toISOString(),
+    },
+  });
+};
+
+/**
+ * Resolve any active poll-failure alerts when polling succeeds.
+ *
+ * @returns {Promise<number>}
+ */
+exports.resolvePollFailureAlerts = async () => {
+  return alertRepository.resolveByType('poll_failure');
+};

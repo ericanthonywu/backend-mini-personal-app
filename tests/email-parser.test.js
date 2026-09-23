@@ -5,8 +5,12 @@ const { parseBcaEmail, parseBcaDate, parseBcaAmount } = require('../src/utils/em
 const transactionRepository = require('../src/repositories/transaction.repository');
 const merchantRuleRepository = require('../src/repositories/merchant-rule.repository');
 const alertService = require('../src/services/alert.service');
+const db = require('../src/config/database');
 
 describe('email-parser.util', () => {
+  afterAll(async () => {
+    await db.destroy();
+  });
   describe('parseBcaAmount', () => {
     it('parses Rp format with thousand dots and comma decimal', () => {
       expect(parseBcaAmount('Rp494.614,00')).toBe(494614);

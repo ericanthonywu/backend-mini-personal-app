@@ -224,13 +224,32 @@ const emailParserService = {
         });
       });
 
-      imap.once('error', (err) => {
-        console.error('[email-parser] IMAP connection error:', err.message);
-        reject(err);
+      let isSettled = false;
+      function safeReject(err) {
+        if (!isSettled) {
+          isSettled = true;
+          reject(err);
+        }
+      }
+      function safeResolve(val) {
+        if (!isSettled) {
+          isSettled = true;
+          resolve(val);
+        }
+      }
+
+      // Persistent error listener prevents unhandled error crashes if connection resets during disconnect
+      imap.on('error', (err) => {
+        if (!isSettled) {
+          console.error('[email-parser] IMAP connection error:', err.message);
+          safeReject(err);
+        } else {
+          console.warn('[email-parser] IMAP socket teardown warning:', err.message);
+        }
       });
 
       imap.once('end', () => {
-        resolve(emails);
+        safeResolve(emails);
       });
 
       imap.connect();

@@ -35,7 +35,7 @@ app.listen(env.PORT, () => {
   console.log(`[app] Server running on port ${env.PORT} (${env.NODE_ENV})`);
   console.log(`[app] Health check: http://localhost:${env.PORT}/health`);
 
-  // Start the email polling cron job
+  // Start real-time IMAP IDLE email listener
   startScheduledPoller();
 });
 
