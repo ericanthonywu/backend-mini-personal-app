@@ -5,7 +5,10 @@ const { simpleParser } = require('mailparser');
 const { parseBcaEmail } = require('../utils/email-parser.util');
 const transactionRepository = require('../repositories/transaction.repository');
 const merchantRuleRepository = require('../repositories/merchant-rule.repository');
+const categoryRepository = require('../repositories/category.repository');
 const alertService = require('./alert.service');
+const aiService = require('./ai.service');
+const notificationService = require('./notification.service');
 
 const DEFAULT_ALLOWED_SENDERS = [
   'kartukreditbca@bca.co.id',
@@ -101,9 +104,33 @@ const emailParserService = {
         continue;
       }
 
-      // Auto-categorize based on merchant rules
+      // 1. Auto-categorize based on merchant rules
       const rule = await merchantRuleRepository.findMatchingRule(parsed.merchant);
-      const categoryId = rule ? rule.category_id : null;
+      let categoryId = rule ? rule.category_id : null;
+      let categoryName = null;
+
+      // 2. If no matching merchant rule, auto-categorize using Gemini AI
+      if (!categoryId) {
+        try {
+          const allCategories = await categoryRepository.findAll();
+          const aiResult = await aiService.categorizeTransaction({
+            merchant: parsed.merchant,
+            amount: parsed.amount,
+            transactionType: parsed.transactionType,
+            notes: parsed.notes,
+            rawEmailSnippet: email.html || email.textAsHtml || '',
+            categories: allCategories,
+          });
+
+          if (aiResult && aiResult.categoryId) {
+            categoryId = aiResult.categoryId;
+            categoryName = aiResult.categoryName;
+            console.log(`[email-parser] AI auto-categorized "${parsed.merchant}" -> ${aiResult.categoryName} (${aiResult.reasoning})`);
+          }
+        } catch (aiErr) {
+          console.warn('[email-parser] AI categorization skipped due to error:', aiErr.message);
+        }
+      }
 
       const result = await transactionRepository.createIgnoreDuplicate({
         amount: parsed.amount,
@@ -118,6 +145,24 @@ const emailParserService = {
       if (result) {
         inserted++;
         console.log(`[email-parser] Inserted transaction: ${parsed.merchant} Rp${parsed.amount}`);
+
+        // Send ntfy.sh push notification for new transaction
+        try {
+          if (!categoryName && categoryId) {
+            const cat = await categoryRepository.findById(categoryId);
+            categoryName = cat ? cat.name : null;
+          }
+          await notificationService.notifyNewTransaction(
+            {
+              amount: parsed.amount,
+              merchant: parsed.merchant,
+              transaction_date: parsed.transactionDate,
+            },
+            categoryName
+          );
+        } catch (notifErr) {
+          console.error('[email-parser] Failed to send ntfy notification:', notifErr.message);
+        }
       } else {
         skipped++;
         console.log(`[email-parser] Skipped duplicate: ${email.messageId}`);

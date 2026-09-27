@@ -2,6 +2,7 @@
 
 const moment = require('moment-timezone');
 const transactionRepository = require('../repositories/transaction.repository');
+const aiService = require('./ai.service');
 const env = require('../config/env');
 
 const TZ = 'Asia/Jakarta'; // WIB (UTC+7)
@@ -261,6 +262,158 @@ const budgetService = {
         realSpent: w.realSpent,
       })),
       days,
+    };
+  },
+
+  /**
+   * Helper to resolve start and end Dates for a specified period name or custom bounds.
+   *
+   * @param {string} [period='month'] - 'week' | 'month' | 'last_month' | '3_months' | 'year' | 'all'
+   * @param {string|Date} [customFrom]
+   * @param {string|Date} [customTo]
+   * @returns {{ dateFrom: Date|undefined, dateTo: Date|undefined, label: string }}
+   */
+  resolvePeriodBounds(period = 'month', customFrom, customTo) {
+    if (customFrom || customTo) {
+      const from = customFrom ? new Date(customFrom) : undefined;
+      const to   = customTo   ? new Date(customTo)   : undefined;
+      return {
+        dateFrom: from,
+        dateTo: to,
+        label: 'Kustom',
+      };
+    }
+
+    const now = nowWIB();
+
+    switch (period) {
+      case 'week':
+        return {
+          dateFrom: now.clone().startOf('isoWeek').toDate(),
+          dateTo: now.clone().endOf('isoWeek').toDate(),
+          label: 'Minggu Ini',
+        };
+      case 'last_month': {
+        const lastM = now.clone().subtract(1, 'month');
+        return {
+          dateFrom: lastM.clone().startOf('month').toDate(),
+          dateTo: lastM.clone().endOf('month').toDate(),
+          label: lastM.format('MMMM YYYY'),
+        };
+      }
+      case '3_months':
+        return {
+          dateFrom: now.clone().subtract(2, 'months').startOf('month').toDate(),
+          dateTo: now.clone().endOf('month').toDate(),
+          label: '3 Bulan Terakhir',
+        };
+      case 'year':
+        return {
+          dateFrom: now.clone().startOf('year').toDate(),
+          dateTo: now.clone().endOf('year').toDate(),
+          label: now.format('YYYY'),
+        };
+      case 'all':
+        return {
+          dateFrom: undefined,
+          dateTo: undefined,
+          label: 'Semua Waktu',
+        };
+      case 'month':
+      default:
+        return {
+          dateFrom: now.clone().startOf('month').toDate(),
+          dateTo: now.clone().endOf('month').toDate(),
+          label: now.format('MMMM YYYY'),
+        };
+    }
+  },
+
+  /**
+   * Get category breakdown of expenses with top merchants.
+   *
+   * @param {Object} [params]
+   * @param {string} [params.period='month']
+   * @param {string|Date} [params.dateFrom]
+   * @param {string|Date} [params.dateTo]
+   * @returns {Promise<Object>}
+   */
+  async getCategoryBreakdown({ period = 'month', dateFrom, dateTo } = {}) {
+    const bounds = budgetService.resolvePeriodBounds(period, dateFrom, dateTo);
+
+    const [breakdown, topMerchants] = await Promise.all([
+      transactionRepository.findCategoryBreakdown({
+        dateFrom: bounds.dateFrom,
+        dateTo: bounds.dateTo,
+        excludeIgnored: true,
+      }),
+      transactionRepository.findTopMerchants({
+        dateFrom: bounds.dateFrom,
+        dateTo: bounds.dateTo,
+        limit: 5,
+        excludeIgnored: true,
+      }),
+    ]);
+
+    return {
+      period,
+      label: bounds.label,
+      dateFrom: bounds.dateFrom ? bounds.dateFrom.toISOString() : null,
+      dateTo: bounds.dateTo ? bounds.dateTo.toISOString() : null,
+      totalSpent: breakdown.totalSpent,
+      totalCount: breakdown.totalCount,
+      uncategorizedCount: breakdown.uncategorizedCount,
+      uncategorizedSpent: breakdown.uncategorizedSpent,
+      categories: breakdown.categories,
+      topMerchants,
+    };
+  },
+
+  /**
+   * Generate an AI-powered financial summary of the expenses.
+   *
+   * @param {Object} [params]
+   * @param {string} [params.period='month']
+   * @param {string|Date} [params.dateFrom]
+   * @param {string|Date} [params.dateTo]
+   * @returns {Promise<Object>}
+   */
+  async getAiExpenseSummary({ period = 'month', dateFrom, dateTo } = {}) {
+    const breakdownData = await budgetService.getCategoryBreakdown({ period, dateFrom, dateTo });
+
+    // Fetch budget context if available
+    let budgetInfo = null;
+    if (period === 'month') {
+      const summary = await budgetService.getSummary();
+      budgetInfo = summary.month;
+    } else if (period === 'week') {
+      const summary = await budgetService.getSummary();
+      budgetInfo = summary.week;
+    }
+
+    // Fetch 5 recent transactions
+    const recent = await transactionRepository.findRecent(5);
+
+    const aiSummary = await aiService.generateExpenseSummary({
+      period: breakdownData.label || period,
+      totalSpent: breakdownData.totalSpent,
+      totalCount: breakdownData.totalCount,
+      categoryBreakdown: breakdownData.categories,
+      topMerchants: breakdownData.topMerchants,
+      budget: budgetInfo,
+      recentTransactions: recent,
+    });
+
+    return {
+      period,
+      label: breakdownData.label,
+      dateFrom: breakdownData.dateFrom,
+      dateTo: breakdownData.dateTo,
+      totalSpent: breakdownData.totalSpent,
+      totalCount: breakdownData.totalCount,
+      categories: breakdownData.categories,
+      topMerchants: breakdownData.topMerchants,
+      ai: aiSummary,
     };
   },
 };

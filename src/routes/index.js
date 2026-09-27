@@ -9,6 +9,7 @@ const transactionController = require('../controllers/transaction.controller');
 const categoryController = require('../controllers/category.controller');
 const budgetController = require('../controllers/budget.controller');
 const alertController = require('../controllers/alert.controller');
+const notificationController = require('../controllers/notification.controller');
 
 const router = Router();
 
@@ -25,6 +26,8 @@ router.post('/poll', pollController.trigger);
 router.get('/transactions', transactionController.list);
 router.post('/transactions', ...transactionController.create);
 router.get('/transactions/recent', transactionController.recent);
+router.post('/transactions/ai-categorize-all', transactionController.aiCategorizeAll);
+router.post('/transactions/:id/ai-categorize', transactionController.aiCategorize);
 router.get('/transactions/:id', transactionController.getById);
 router.patch('/transactions/:id', ...transactionController.update);
 router.delete('/transactions/:id', transactionController.delete);
@@ -40,12 +43,18 @@ router.get('/merchant-rules', categoryController.listRules);
 router.post('/merchant-rules', ...categoryController.createRule);
 router.delete('/merchant-rules/:id', categoryController.deleteRule);
 
-// Budget
+// Budget & Analytics
 router.get('/budget/chart', budgetController.getChart);
 router.get('/budget/daily-chart', budgetController.getDailyChart);
 router.get('/budget/spending-summary', budgetController.getSpendingSummary);
 router.get('/budget/daily-summary', budgetController.getDailySummary);
+router.get('/budget/category-breakdown', budgetController.getCategoryBreakdown);
+router.get('/budget/ai-summary', budgetController.getAiSummary);
 router.get('/budget', budgetController.getSummary);
+
+// Notifications (ntfy.sh)
+router.post('/notifications/test', notificationController.test);
+router.get('/notifications/config', notificationController.getConfig);
 
 // Alerts
 router.get('/alerts/count', alertController.count);      // lightweight — widget badge

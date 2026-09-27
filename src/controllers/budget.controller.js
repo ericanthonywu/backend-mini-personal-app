@@ -90,6 +90,34 @@ const budgetController = {
       next(err);
     }
   },
+
+  /**
+   * GET /api/budget/category-breakdown
+   * Query params: period ('week' | 'month' | 'last_month' | '3_months' | 'year' | 'all'), dateFrom, dateTo
+   */
+  async getCategoryBreakdown(req, res, next) {
+    try {
+      const { period, dateFrom, dateTo } = req.query;
+      const data = await budgetService.getCategoryBreakdown({ period, dateFrom, dateTo });
+      return res.status(200).json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
+   * GET /api/budget/ai-summary
+   * Query params: period ('week' | 'month' | 'last_month' | '3_months' | 'year' | 'all'), dateFrom, dateTo
+   */
+  async getAiSummary(req, res, next) {
+    try {
+      const { period, dateFrom, dateTo } = req.query;
+      const data = await budgetService.getAiExpenseSummary({ period, dateFrom, dateTo });
+      return res.status(200).json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
 };
 
 module.exports = budgetController;

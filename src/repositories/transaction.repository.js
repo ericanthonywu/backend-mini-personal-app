@@ -403,6 +403,150 @@ const transactionRepository = {
       })),
     };
   },
+
+  /**
+   * Get category breakdown of expenses within a date range.
+   *
+   * @param {Object} [params]
+   * @param {Date} [params.dateFrom]
+   * @param {Date} [params.dateTo]
+   * @param {boolean} [params.excludeIgnored=true]
+   * @returns {Promise<{ categories: Array, totalSpent: number, totalCount: number, uncategorizedCount: number, uncategorizedSpent: number }>}
+   */
+  async findCategoryBreakdown({ dateFrom, dateTo, excludeIgnored = true } = {}) {
+    const query = db('transactions as t')
+      .leftJoin('categories as c', 't.category_id', 'c.id')
+      .select(
+        'c.id as category_id',
+        db.raw("COALESCE(c.name, 'Uncategorized') as category_name"),
+        db.raw("COALESCE(c.color, '#94A3B8') as category_color"),
+        db.raw('COUNT(t.id) as transaction_count'),
+        db.raw('SUM(t.amount) as total_amount'),
+        db.raw('AVG(t.amount) as average_amount')
+      );
+
+    if (excludeIgnored) {
+      query.where('t.is_ignored', false);
+    }
+    if (dateFrom) {
+      query.where('t.transaction_date', '>=', dateFrom);
+    }
+    if (dateTo) {
+      query.where('t.transaction_date', '<=', dateTo);
+    }
+
+    query.groupBy('c.id', 'c.name', 'c.color')
+      .orderByRaw('SUM(t.amount) DESC');
+
+    const rows = await query;
+
+    let totalSpent = 0;
+    let totalCount = 0;
+    let uncategorizedCount = 0;
+    let uncategorizedSpent = 0;
+
+    for (const r of rows) {
+      const amount = parseInt(r.total_amount || '0', 10);
+      const count = parseInt(r.transaction_count || '0', 10);
+      totalSpent += amount;
+      totalCount += count;
+      if (!r.category_id) {
+        uncategorizedSpent += amount;
+        uncategorizedCount += count;
+      }
+    }
+
+    const categories = rows.map((r) => {
+      const amount = parseInt(r.total_amount || '0', 10);
+      const count = parseInt(r.transaction_count || '0', 10);
+      const avg = Math.round(parseFloat(r.average_amount || '0'));
+      const percentage = totalSpent > 0 ? Math.round((amount / totalSpent) * 1000) / 10 : 0; // 1 decimal place
+
+      return {
+        categoryId: r.category_id || null,
+        categoryName: r.category_name,
+        categoryColor: r.category_color,
+        transactionCount: count,
+        totalAmount: amount,
+        averageAmount: avg,
+        percentage,
+      };
+    });
+
+    return {
+      categories,
+      totalSpent,
+      totalCount,
+      uncategorizedCount,
+      uncategorizedSpent,
+    };
+  },
+
+  /**
+   * Find top spending merchants in a date range.
+   *
+   * @param {Object} [params]
+   * @param {Date} [params.dateFrom]
+   * @param {Date} [params.dateTo]
+   * @param {number} [params.limit=5]
+   * @param {boolean} [params.excludeIgnored=true]
+   * @returns {Promise<Array<{ merchant: string, totalSpent: number, count: number }>>}
+   */
+  async findTopMerchants({ dateFrom, dateTo, limit = 5, excludeIgnored = true } = {}) {
+    const query = db('transactions as t')
+      .select('t.merchant')
+      .sum('t.amount as total_spent')
+      .count('t.id as count');
+
+    if (excludeIgnored) {
+      query.where('t.is_ignored', false);
+    }
+    if (dateFrom) {
+      query.where('t.transaction_date', '>=', dateFrom);
+    }
+    if (dateTo) {
+      query.where('t.transaction_date', '<=', dateTo);
+    }
+
+    query.groupBy('t.merchant')
+      .orderByRaw('SUM(t.amount) DESC')
+      .limit(limit);
+
+    const rows = await query;
+    return rows.map((r) => ({
+      merchant: r.merchant,
+      totalSpent: parseInt(r.total_spent || '0', 10),
+      count: parseInt(r.count || '0', 10),
+    }));
+  },
+
+  /**
+   * Find transactions that currently have no category assigned.
+   *
+   * @param {number} [limit=50]
+   * @returns {Promise<Array>}
+   */
+  async findUncategorized(limit = 50) {
+    return db('transactions')
+      .whereNull('category_id')
+      .orderBy('transaction_date', 'desc')
+      .limit(limit);
+  },
+
+  /**
+   * Set category for a transaction.
+   *
+   * @param {string} id
+   * @param {string} categoryId
+   * @returns {Promise<Object>}
+   */
+  async updateCategoryId(id, categoryId) {
+    const [row] = await db('transactions')
+      .where({ id })
+      .update({ category_id: categoryId, updated_at: new Date() })
+      .returning('*');
+    return row;
+  },
 };
 
 module.exports = transactionRepository;

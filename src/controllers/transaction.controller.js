@@ -102,6 +102,30 @@ const transactionController = {
       }
     },
   ],
+
+  /**
+   * POST /api/transactions/:id/ai-categorize
+   */
+  async aiCategorize(req, res, next) {
+    try {
+      const result = await transactionService.aiCategorize(req.params.id);
+      return res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
+   * POST /api/transactions/ai-categorize-all
+   */
+  async aiCategorizeAll(req, res, next) {
+    try {
+      const result = await transactionService.aiCategorizeAll();
+      return res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
 };
 
 module.exports = transactionController;

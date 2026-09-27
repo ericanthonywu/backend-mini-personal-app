@@ -1,7 +1,7 @@
-'use strict';
-
 const transactionRepository = require('../repositories/transaction.repository');
 const categoryRepository = require('../repositories/category.repository');
+const aiService = require('./ai.service');
+const notificationService = require('./notification.service');
 const AppError = require('../utils/app-error');
 
 /**
@@ -83,7 +83,19 @@ const transactionService = {
     });
 
     // Return the joined row so the response includes category name/color.
-    return transactionRepository.findById(created.id);
+    const fullTx = await transactionRepository.findById(created.id);
+
+    // Send ntfy push notification for newly recorded manual transaction
+    try {
+      await notificationService.notifyNewTransaction(
+        fullTx,
+        fullTx ? fullTx.category_name : null
+      );
+    } catch (notifErr) {
+      console.error('[transaction-service] Failed to send ntfy notification:', notifErr.message);
+    }
+
+    return fullTx;
   },
 
   /**
@@ -132,6 +144,87 @@ const transactionService = {
    */
   async getRecent(limit = 5) {
     return transactionRepository.findRecent(limit);
+  },
+
+  /**
+   * Auto-categorize a single transaction with AI.
+   *
+   * @param {string} id
+   * @returns {Promise<Object>} updated transaction and AI result
+   */
+  async aiCategorize(id) {
+    const tx = await transactionRepository.findById(id);
+    if (!tx) throw new AppError('Transaction not found', 404);
+
+    const categories = await categoryRepository.findAll();
+    const aiResult = await aiService.categorizeTransaction({
+      merchant: tx.merchant,
+      amount: tx.amount,
+      transactionType: tx.transaction_type,
+      notes: tx.notes,
+      categories,
+    });
+
+    if (aiResult && aiResult.categoryId) {
+      await transactionRepository.updateCategoryId(id, aiResult.categoryId);
+    }
+
+    const updated = await transactionRepository.findById(id);
+    return {
+      transaction: updated,
+      ai: aiResult,
+    };
+  },
+
+  /**
+   * Batch auto-categorize all uncategorized transactions with AI.
+   *
+   * @returns {Promise<{ processed: number, categorized: number, results: Array }>}
+   */
+  async aiCategorizeAll() {
+    const uncategorized = await transactionRepository.findUncategorized(50);
+    const categories = await categoryRepository.findAll();
+
+    let categorized = 0;
+    const results = [];
+
+    for (const tx of uncategorized) {
+      try {
+        const aiResult = await aiService.categorizeTransaction({
+          merchant: tx.merchant,
+          amount: tx.amount,
+          transactionType: tx.transaction_type,
+          notes: tx.notes,
+          categories,
+        });
+
+        if (aiResult && aiResult.categoryId) {
+          await transactionRepository.updateCategoryId(tx.id, aiResult.categoryId);
+          categorized++;
+        }
+
+        results.push({
+          id: tx.id,
+          merchant: tx.merchant,
+          categoryId: aiResult.categoryId,
+          categoryName: aiResult.categoryName,
+          confidence: aiResult.confidence,
+          reasoning: aiResult.reasoning,
+        });
+      } catch (err) {
+        results.push({
+          id: tx.id,
+          merchant: tx.merchant,
+          error: err.message,
+        });
+      }
+    }
+
+    return {
+      processed: uncategorized.length,
+      categorized,
+      results,
+    };
   },
 };
 

@@ -38,6 +38,14 @@ const env = {
   PORT: parseInt(process.env.PORT || '3000', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
 
+  // Gemini AI Studio
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+
+  // ntfy.sh Notifications
+  NTFY_URL: process.env.NTFY_URL || 'https://ntfy.sh',
+  NTFY_TOPIC: process.env.NTFY_TOPIC || 'bca_expense_tracker_eric',
+
   get isDev() {
     return this.NODE_ENV === 'development';
   },
