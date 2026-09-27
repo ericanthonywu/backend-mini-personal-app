@@ -3,14 +3,18 @@
 const env = require('../config/env');
 
 const FALLBACK_MODELS = [
-  env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
-  'gemini-3.1-flash-lite',
+  env.GEMINI_MODEL || 'gemini-3.8-flash',
   'gemini-3.8-flash',
-  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
 ];
 
 // Unique set of models to try
 const MODEL_CANDIDATES = Array.from(new Set(FALLBACK_MODELS.filter(Boolean)));
+
+function delay(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 class AiService {
   /**
@@ -49,42 +53,50 @@ class AiService {
         requestBody.generationConfig.responseMimeType = 'application/json';
       }
 
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-        });
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+          });
 
-        if (!response.ok) {
-          const errText = await response.text().catch(() => '');
-          lastError = new Error(`Gemini model ${model} HTTP ${response.status}: ${errText}`);
-          console.warn(`[ai-service] Model ${model} failed with status ${response.status}. Trying next candidate...`);
-          continue; // try next candidate model
-        }
-
-        const data = await response.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) {
-          lastError = new Error(`Empty response from Gemini model ${model}`);
-          continue;
-        }
-
-        if (json) {
-          try {
-            // Clean markdown code blocks if present
-            const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-            return JSON.parse(cleaned);
-          } catch (parseErr) {
-            console.warn('[ai-service] Failed to parse JSON response from Gemini, raw text:', text);
-            throw new Error(`Invalid JSON returned by Gemini: ${parseErr.message}`);
+          if (!response.ok) {
+            const errText = await response.text().catch(() => '');
+            if ((response.status === 429 || response.status === 503) && attempt < 3) {
+              const waitTime = attempt * 3000;
+              console.warn(`[ai-service] Model ${model} returned HTTP ${response.status}. Retrying in ${waitTime}ms (attempt ${attempt}/3)...`);
+              await delay(waitTime);
+              continue;
+            }
+            lastError = new Error(`Gemini model ${model} HTTP ${response.status}: ${errText}`);
+            console.warn(`[ai-service] Model ${model} failed with status ${response.status}. Trying next candidate...`);
+            break; // Move to next candidate model
           }
-        }
 
-        return text;
-      } catch (err) {
-        lastError = err;
-        console.warn(`[ai-service] Error calling model ${model}:`, err.message);
+          const data = await response.json();
+          const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (!text) {
+            lastError = new Error(`Empty response from Gemini model ${model}`);
+            break;
+          }
+
+          if (json) {
+            try {
+              // Clean markdown code blocks if present
+              const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+              return JSON.parse(cleaned);
+            } catch (parseErr) {
+              console.warn('[ai-service] Failed to parse JSON response from Gemini, raw text:', text);
+              throw new Error(`Invalid JSON returned by Gemini: ${parseErr.message}`);
+            }
+          }
+
+          return text;
+        } catch (err) {
+          lastError = err;
+          console.warn(`[ai-service] Error calling model ${model} (attempt ${attempt}):`, err.message);
+        }
       }
     }
 

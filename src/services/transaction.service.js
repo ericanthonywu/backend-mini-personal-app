@@ -59,12 +59,6 @@ const transactionService = {
    * @returns {Promise<Object>}
    * @throws {AppError} 400 if categoryId references a non-existent category
    */
-  async create(data) {
-    if (data.categoryId) {
-      const cat = await categoryRepository.findById(data.categoryId);
-      if (!cat) throw new AppError('Category not found', 400);
-    }
-
     const merchant = data.merchant.trim();
     const transactionType = data.transactionType || 'Manual';
     // Mirror the email-parsed convention: "MERCHANT - TRANSACTION_TYPE"
@@ -72,13 +66,35 @@ const transactionService = {
       ? data.notes.trim()
       : `${merchant} - ${transactionType}`;
 
+    let categoryId = data.categoryId;
+    if (categoryId) {
+      const cat = await categoryRepository.findById(categoryId);
+      if (!cat) throw new AppError('Category not found', 400);
+    } else {
+      try {
+        const allCategories = await categoryRepository.findAll();
+        const aiResult = await aiService.categorizeTransaction({
+          merchant,
+          amount: data.amount,
+          transactionType,
+          notes,
+          categories: allCategories,
+        });
+        if (aiResult && aiResult.categoryId) {
+          categoryId = aiResult.categoryId;
+        }
+      } catch (aiErr) {
+        console.warn('[transaction-service] AI auto-categorization skipped for manual transaction:', aiErr.message);
+      }
+    }
+
     const created = await transactionRepository.create({
       amount: data.amount,
       transactionDate: new Date(data.transactionDate),
       merchant,
       transactionType,
       notes,
-      categoryId: data.categoryId,
+      categoryId,
       isIgnored: data.isIgnored,
     });
 
