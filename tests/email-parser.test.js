@@ -4,7 +4,9 @@ const emailParserService = require('../src/services/email-parser.service');
 const { parseBcaEmail, parseBcaDate, parseBcaAmount } = require('../src/utils/email-parser.util');
 const transactionRepository = require('../src/repositories/transaction.repository');
 const merchantRuleRepository = require('../src/repositories/merchant-rule.repository');
+const categoryRepository = require('../src/repositories/category.repository');
 const notificationService = require('../src/services/notification.service');
+const aiService = require('../src/services/ai.service');
 const alertService = require('../src/services/alert.service');
 const db = require('../src/config/database');
 
@@ -106,7 +108,15 @@ describe('emailParserService', () => {
 
   describe('pollAndInsert', () => {
     beforeEach(() => {
+      jest.spyOn(categoryRepository, 'findAll').mockResolvedValue([]);
       jest.spyOn(notificationService, 'notifyNewTransaction').mockResolvedValue(true);
+      jest.spyOn(aiService, 'categorizeTransaction').mockResolvedValue({
+        categoryId: null,
+        categoryName: null,
+        confidence: 0,
+        reasoning: 'Mocked for testing',
+      });
+      jest.spyOn(aiService, 'callGemini').mockResolvedValue({});
     });
 
     const validHtml = `

@@ -105,4 +105,59 @@ describe('Notification and AI Services', () => {
       spy.mockRestore();
     });
   });
+
+  describe('AiService Safety in Testing', () => {
+    it('never calls live fetch to Gemini API during tests', async () => {
+      const fetchSpy = jest.spyOn(global, 'fetch');
+      const result = await aiService.callGemini('Test prompt', { json: true });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result).toBeDefined();
+      expect(result.reasoning).toContain('Test environment');
+      fetchSpy.mockRestore();
+    });
+
+    it('categorizes transaction using mocked Gemini without network', async () => {
+      const spy = jest.spyOn(aiService, 'callGemini').mockResolvedValueOnce({
+        categoryId: 'cat-1',
+        categoryName: 'Food',
+        confidence: 0.95,
+        reasoning: 'Shopeefood matches food category',
+      });
+
+      const res = await aiService.categorizeTransaction({
+        merchant: 'SHOPEEFOOD',
+        amount: 45000,
+        categories: [{ id: 'cat-1', name: 'Food' }, { id: 'cat-2', name: 'Transport' }],
+      });
+
+      expect(spy).toHaveBeenCalled();
+      expect(res.categoryId).toBe('cat-1');
+      expect(res.categoryName).toBe('Food');
+      expect(res.confidence).toBe(0.95);
+      spy.mockRestore();
+    });
+
+    it('generates expense summary using mocked Gemini without network', async () => {
+      const spy = jest.spyOn(aiService, 'callGemini').mockResolvedValueOnce({
+        healthScore: 'healthy',
+        summary: 'Kondisi pengeluaran sangat sehat.',
+        keyInsights: ['Pengeluaran stabil'],
+        recommendations: ['Pertahankan pola belanja'],
+      });
+
+      const res = await aiService.generateExpenseSummary({
+        period: 'Bulan Ini',
+        totalSpent: 1000000,
+        totalCount: 5,
+        categoryBreakdown: [{ categoryName: 'Food', totalAmount: 500000, percentage: 50, transactionCount: 3 }],
+        topMerchants: [{ merchant: 'Resto A', totalSpent: 300000, count: 2 }],
+      });
+
+      expect(spy).toHaveBeenCalled();
+      expect(res.healthScore).toBe('healthy');
+      expect(res.summary).toContain('sangat sehat');
+      expect(res.keyInsights.length).toBe(1);
+      spy.mockRestore();
+    });
+  });
 });

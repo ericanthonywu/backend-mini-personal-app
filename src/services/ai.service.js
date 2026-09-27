@@ -27,6 +27,25 @@ class AiService {
    * @returns {Promise<any>}
    */
   static async callGemini(prompt, { json = true, temperature = 0.2 } = {}) {
+    // Safety guard: Never make live external network requests to Gemini during tests
+    if (env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test') {
+      if (json) {
+        return {
+          categoryId: null,
+          categoryName: null,
+          confidence: 0,
+          reasoning: 'Test environment mocked response',
+          reply: 'Test environment advisor reply',
+          suggestions: ['Test suggestion 1', 'Test suggestion 2'],
+          healthScore: 'healthy',
+          summary: 'Test summary in mock test mode',
+          keyInsights: ['Test insight 1'],
+          recommendations: ['Test recommendation 1'],
+        };
+      }
+      return 'Test response in mock test mode';
+    }
+
     const apiKey = env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error('GEMINI_API_KEY is not configured in backend environment');
