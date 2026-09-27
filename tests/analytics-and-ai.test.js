@@ -7,6 +7,7 @@ const budgetService = require('../src/services/budget.service');
 describe('Notification and AI Services', () => {
   describe('NotificationService', () => {
     it('formats and dispatches transaction notification', async () => {
+      const sendSpy = jest.spyOn(notificationService, 'send').mockResolvedValue(true);
       const result = await notificationService.notifyNewTransaction(
         {
           merchant: 'STARBUCKS TEST',
@@ -16,9 +17,17 @@ describe('Notification and AI Services', () => {
         'Food'
       );
       expect(result).toBe(true);
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringContaining('STARBUCKS TEST'),
+          message: expect.stringContaining('Rp 55.000'),
+        })
+      );
+      sendSpy.mockRestore();
     });
 
     it('formats and dispatches budget status notification', async () => {
+      const sendSpy = jest.spyOn(notificationService, 'send').mockResolvedValue(true);
       const result = await notificationService.notifyBudgetStatus({
         period: 'Bulan',
         spent: 4500000,
@@ -27,6 +36,13 @@ describe('Notification and AI Services', () => {
         isOverBudget: false,
       });
       expect(result).toBe(true);
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringContaining('Status Anggaran Bulan'),
+          message: expect.stringContaining('4.500.000'),
+        })
+      );
+      sendSpy.mockRestore();
     });
   });
 

@@ -4,6 +4,7 @@ const emailParserService = require('../src/services/email-parser.service');
 const { parseBcaEmail, parseBcaDate, parseBcaAmount } = require('../src/utils/email-parser.util');
 const transactionRepository = require('../src/repositories/transaction.repository');
 const merchantRuleRepository = require('../src/repositories/merchant-rule.repository');
+const notificationService = require('../src/services/notification.service');
 const alertService = require('../src/services/alert.service');
 const db = require('../src/config/database');
 
@@ -104,6 +105,10 @@ describe('emailParserService', () => {
   });
 
   describe('pollAndInsert', () => {
+    beforeEach(() => {
+      jest.spyOn(notificationService, 'notifyNewTransaction').mockResolvedValue(true);
+    });
+
     const validHtml = `
       <table>
         <tr><td>Merchant / ATM</td><td>:</td><td><span>SHOPEEFOOD</span></td></tr>

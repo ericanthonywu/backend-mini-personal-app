@@ -28,6 +28,11 @@ class NotificationService {
    * @returns {Promise<boolean>}
    */
   static async send({ topic, title, message, priority = 'default', tags = [], click } = {}) {
+    // Never send real push notifications during automated testing
+    if (env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test') {
+      return true;
+    }
+
     const targetTopic = topic || env.NTFY_TOPIC;
     if (!targetTopic) {
       console.warn('[notification] Skipping notification: No NTFY_TOPIC configured.');
