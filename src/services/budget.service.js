@@ -416,6 +416,35 @@ const budgetService = {
       ai: aiSummary,
     };
   },
+
+  /**
+   * Conversational chat with the AI Financial Advisor.
+   *
+   * @param {Object} params
+   * @param {string} params.message
+   * @param {Array<{ role: string, content: string }>} [params.history]
+   * @param {string} [params.period='month']
+   * @returns {Promise<{ reply: string, suggestions: string[], timestamp: string }>}
+   */
+  async chatWithAdvisor({ message, history = [], period = 'month' }) {
+    const breakdownData = await budgetService.getCategoryBreakdown({ period });
+    const summary = await budgetService.getSummary();
+    const recent = await transactionRepository.findRecent(15);
+
+    return aiService.chatWithAdvisor({
+      userMessage: message,
+      history,
+      financialContext: {
+        period: breakdownData.label || period,
+        totalSpent: breakdownData.totalSpent,
+        totalCount: breakdownData.totalCount,
+        categories: breakdownData.categories,
+        topMerchants: breakdownData.topMerchants,
+        budgetSummary: summary,
+        recentTransactions: recent,
+      },
+    });
+  },
 };
 
 module.exports = budgetService;

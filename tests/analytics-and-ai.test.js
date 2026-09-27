@@ -42,5 +42,51 @@ describe('Notification and AI Services', () => {
       expect(weekBounds.dateTo).toBeInstanceOf(Date);
       expect(weekBounds.label).toBe('Minggu Ini');
     });
+
+    it('handles chatWithAdvisor structure gracefully with response', async () => {
+      const spy = jest.spyOn(aiService, 'callGemini').mockResolvedValueOnce({
+        reply: 'Pengeluaran Anda bulan ini cukup terkendali.',
+        suggestions: ['Bagaimana budget minggu ini?', 'Saran penghematan makanan?'],
+      });
+
+      const response = await aiService.chatWithAdvisor({
+        userMessage: 'Bagaimana cara hemat bulan ini?',
+        history: [],
+        financialContext: {
+          period: 'Bulan Ini',
+          totalSpent: 1500000,
+          totalCount: 10,
+          categories: [{ categoryName: 'Food', totalAmount: 1000000, percentage: 66, transactionCount: 7 }],
+          topMerchants: [{ merchant: 'Resto Test', count: 4, totalSpent: 600000 }],
+        },
+      });
+
+      expect(spy).toHaveBeenCalled();
+      expect(response).toBeDefined();
+      expect(response.reply).toContain('Pengeluaran Anda');
+      expect(response.suggestions.length).toBe(2);
+      expect(response.timestamp).toBeDefined();
+
+      spy.mockRestore();
+    });
+
+    it('falls back gracefully if callGemini throws in chatWithAdvisor', async () => {
+      const spy = jest.spyOn(aiService, 'callGemini').mockRejectedValueOnce(new Error('Network error'));
+
+      const response = await aiService.chatWithAdvisor({
+        userMessage: 'Halo',
+        financialContext: {
+          period: 'Bulan Ini',
+          totalSpent: 500000,
+          totalCount: 5,
+        },
+      });
+
+      expect(response).toBeDefined();
+      expect(response.reply).toContain('Halo Eric');
+      expect(Array.isArray(response.suggestions)).toBe(true);
+
+      spy.mockRestore();
+    });
   });
 });

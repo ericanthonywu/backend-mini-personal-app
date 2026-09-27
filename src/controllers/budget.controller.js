@@ -118,6 +118,29 @@ const budgetController = {
       next(err);
     }
   },
+
+  /**
+   * POST /api/budget/ai-advisor/chat
+   * Body: { message: string, history?: Array<{ role: 'user'|'assistant', content: string }>, period?: string }
+   */
+  async chatWithAiAdvisor(req, res, next) {
+    try {
+      const { message, history = [], period = 'month' } = req.body;
+      if (!message || typeof message !== 'string' || !message.trim()) {
+        return res.status(400).json({ error: 'Pesan pertanyaan wajib diisi (message is required)' });
+      }
+
+      const data = await budgetService.chatWithAdvisor({
+        message: message.trim(),
+        history,
+        period,
+      });
+
+      return res.status(200).json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
 };
 
 module.exports = budgetController;

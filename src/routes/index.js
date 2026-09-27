@@ -50,6 +50,7 @@ router.get('/budget/spending-summary', budgetController.getSpendingSummary);
 router.get('/budget/daily-summary', budgetController.getDailySummary);
 router.get('/budget/category-breakdown', budgetController.getCategoryBreakdown);
 router.get('/budget/ai-summary', budgetController.getAiSummary);
+router.post('/budget/ai-advisor/chat', budgetController.chatWithAiAdvisor);
 router.get('/budget', budgetController.getSummary);
 
 // Notifications (ntfy.sh)

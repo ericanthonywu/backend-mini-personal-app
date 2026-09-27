@@ -63,15 +63,14 @@ class AiService {
 
           if (!response.ok) {
             const errText = await response.text().catch(() => '');
-            if ((response.status === 429 || response.status === 503) && attempt < 3) {
-              const waitTime = attempt * 3000;
-              console.warn(`[ai-service] Model ${model} returned HTTP ${response.status}. Retrying in ${waitTime}ms (attempt ${attempt}/3)...`);
-              await delay(waitTime);
+            if (response.status === 503 && attempt < 2) {
+              console.warn(`[ai-service] Model ${model} returned HTTP 503. Retrying in 1000ms...`);
+              await delay(1000);
               continue;
             }
             lastError = new Error(`Gemini model ${model} HTTP ${response.status}: ${errText}`);
             console.warn(`[ai-service] Model ${model} failed with status ${response.status}. Trying next candidate...`);
-            break; // Move to next candidate model
+            break; // Move to next candidate model immediately
           }
 
           const data = await response.json();
@@ -287,6 +286,124 @@ Please analyze this spending profile with financial acumen and return a JSON obj
           'Prioritaskan pembayaran tagihan sebelum batas waktu untuk menghindari denda bunga.',
         ],
         generatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Interactive conversational chat with the AI Financial Advisor.
+   *
+   * @param {Object} params
+   * @param {string} params.userMessage
+   * @param {Array<{ role: 'user'|'assistant', content: string }>} [params.history=[]]
+   * @param {Object} params.financialContext
+   * @returns {Promise<{ reply: string, suggestions: string[], timestamp: string }>}
+   */
+  static async chatWithAdvisor({ userMessage, history = [], financialContext = {} }) {
+    const {
+      period = 'Bulan Ini',
+      totalSpent = 0,
+      totalCount = 0,
+      categories = [],
+      topMerchants = [],
+      budgetSummary = null,
+      recentTransactions = [],
+    } = financialContext;
+
+    const breakdownText = (categories || [])
+      .map((c) => `- ${c.categoryName}: Rp ${Number(c.totalAmount || 0).toLocaleString('id-ID')} (${c.percentage || 0}%, ${c.transactionCount || 0} transaksi)`)
+      .join('\n') || 'Tidak ada data kategori.';
+
+    const merchantsText = (topMerchants || [])
+      .map((m) => `- ${m.merchant}: Rp ${Number(m.totalSpent || m.totalAmount || 0).toLocaleString('id-ID')} (${m.count} transaksi)`)
+      .join('\n') || 'Tidak ada data merchant.';
+
+    const recentText = (recentTransactions || [])
+      .slice(0, 15)
+      .map((t) => {
+        const d = t.transaction_date ? new Date(t.transaction_date).toLocaleDateString('id-ID') : '';
+        return `- [${d}] ${t.merchant}: Rp ${Number(t.amount || 0).toLocaleString('id-ID')} (${t.category_name || 'Tanpa Kategori'})`;
+      })
+      .join('\n') || 'Tidak ada transaksi terbaru.';
+
+    let budgetText = 'Batas anggaran belum diatur.';
+    if (budgetSummary) {
+      const w = budgetSummary.week;
+      const m = budgetSummary.month;
+      budgetText = `
+- Mingguan: Budget Rp ${Number(w?.budget || 0).toLocaleString('id-ID')}, Terpakai Rp ${Number(w?.realSpent || 0).toLocaleString('id-ID')} (${w?.percentUsed || 0}%, Sisa: Rp ${Number(w?.remaining || 0).toLocaleString('id-ID')}) [${w?.isOverBudget ? 'OVER BUDGET' : 'Aman'}]
+- Bulanan: Budget Rp ${Number(m?.budget || 0).toLocaleString('id-ID')}, Terpakai Rp ${Number(m?.realSpent || 0).toLocaleString('id-ID')} (${m?.percentUsed || 0}%, Sisa: Rp ${Number(m?.remaining || 0).toLocaleString('id-ID')}) [${m?.isOverBudget ? 'OVER BUDGET' : 'Aman'}]`.trim();
+    }
+
+    let historyText = '';
+    if (Array.isArray(history) && history.length > 0) {
+      historyText = '\nRIWAYAT PERCAKAPAN SEBELUMNYA:\n' +
+        history
+          .slice(-6)
+          .map((h) => `${h.role === 'user' ? 'Eric' : 'Advisor'}: ${h.content}`)
+          .join('\n') + '\n';
+    }
+
+    const prompt = `You are "Eric's AI Personal Financial Advisor" (Penasihat Keuangan Pribadi AI) for an Indonesian tech-savvy user named Eric, tracking his BCA credit card expenses.
+
+=== DATA KEUANGAN TERKINI ===
+Periode Analisis: ${period}
+Total Pengeluaran: Rp ${Number(totalSpent).toLocaleString('id-ID')} (${totalCount} transaksi)
+
+STATUS ANGGARAN:
+${budgetText}
+
+BREAKDOWN PER KATEGORI:
+${breakdownText}
+
+TOP MERCHANT PENGELUARAN:
+${merchantsText}
+
+15 TRANSAKSI TERAKHIR:
+${recentText}
+${historyText}
+PERTANYAAN / PESAN DARI ERIC:
+"${userMessage}"
+
+=== PANDUAN MENJAWAB ===
+1. Bertindaklah sebagai financial advisor / wealth coach pribadi yang cerdas, ramah, solutif, dan suportif.
+2. Gunakan Bahasa Indonesia yang natural, santun, dan profesional (jangan kaku, gunakan kata sapaan 'kamu' atau 'Anda' yang akrab dan bersahabat).
+3. Selalu hubungkan jawabanmu dengan data riil pengeluaran di atas (sebutkan nominal, nama merchant, persentase kategori, atau sisa budget yang relevan jika sesuai konteks pertanyaan).
+4. Berikan saran praktis yang dapat langsung diterapkan (actionable advice), misalnya batasan pengeluaran harian, strategi meal prep, atau cara menahan godaan belanja online.
+5. Jika ditanya hal umum, tetap kaitkan dengan kondisi keuangannya saat ini.
+6. Sertakan 3 saran pertanyaan tindak lanjut yang relevan dan menarik untuk ditanyakan Eric selanjutnya.
+
+Format balasan dalam JSON murni:
+{
+  "reply": "<Jawaban lengkap Anda dalam format Markdown rapi, gunakan bullet point atau teks tebal jika membantu>",
+  "suggestions": [
+    "<Saran pertanyaan lanjutan 1>",
+    "<Saran pertanyaan lanjutan 2>",
+    "<Saran pertanyaan lanjutan 3>"
+  ]
+}`;
+
+    try {
+      const result = await this.callGemini(prompt, { json: true, temperature: 0.3 });
+      return {
+        reply: result.reply || 'Maaf, saya belum bisa memberikan analisis spesifik saat ini.',
+        suggestions: Array.isArray(result.suggestions) && result.suggestions.length > 0 ? result.suggestions.slice(0, 4) : [
+          'Bagaimana cara menghemat pengeluaran minggu ini?',
+          'Berapa sisa budget bulanan saya?',
+          'Kategori apa yang paling banyak pengeluarannya?'
+        ],
+        timestamp: new Date().toISOString(),
+      };
+    } catch (err) {
+      console.error('[ai-service] Error during advisor chat:', err.message);
+      return {
+        reply: `Halo Eric! Berdasarkan data keuangan saat ini, total pengeluaranmu pada periode ini adalah Rp ${Number(totalSpent).toLocaleString('id-ID')} dari ${totalCount} transaksi. Kategori pengeluaran terbesar adalah ${categories[0]?.categoryName || 'Food'}. Silakan tanyakan hal spesifik seputar anggaran atau merchant tertentu.`,
+        suggestions: [
+          'Bagaimana status budget bulanan saya?',
+          'Merchant mana yang paling sering saya kunjungi?',
+          'Berapa alokasi harian yang aman untuk sisa bulan ini?'
+        ],
+        timestamp: new Date().toISOString(),
       };
     }
   }
