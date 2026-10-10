@@ -3,11 +3,19 @@
 const notificationService = require('../src/services/notification.service');
 const aiService = require('../src/services/ai.service');
 const budgetService = require('../src/services/budget.service');
+const transactionRepository = require('../src/repositories/transaction.repository');
+const db = require('../src/config/database');
 
 describe('Notification and AI Services', () => {
+  afterAll(async () => {
+    await db.destroy();
+  });
+
   describe('NotificationService', () => {
-    it('formats and dispatches transaction notification', async () => {
+    it('formats and dispatches transaction notification including weekly expense', async () => {
       const sendSpy = jest.spyOn(notificationService, 'send').mockResolvedValue(true);
+      const weekSpentSpy = jest.spyOn(budgetService, 'getCurrentWeekSpent').mockResolvedValue(250000);
+
       const result = await notificationService.notifyNewTransaction(
         {
           merchant: 'STARBUCKS TEST',
@@ -23,7 +31,63 @@ describe('Notification and AI Services', () => {
           message: expect.stringContaining('Rp 55.000'),
         })
       );
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Total pengeluaran minggu ini: Rp 250.000'),
+        })
+      );
       sendSpy.mockRestore();
+      weekSpentSpy.mockRestore();
+    });
+
+    it('formats transaction notification with explicitly provided weeklySpent', async () => {
+      const sendSpy = jest.spyOn(notificationService, 'send').mockResolvedValue(true);
+
+      const result = await notificationService.notifyNewTransaction(
+        {
+          merchant: 'KOPI KENANGAN',
+          amount: 28000,
+          transaction_date: new Date(),
+        },
+        'Food',
+        500000
+      );
+      expect(result).toBe(true);
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringContaining('KOPI KENANGAN'),
+          message: expect.stringContaining('Rp 28.000'),
+        })
+      );
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Total pengeluaran minggu ini: Rp 500.000'),
+        })
+      );
+      sendSpy.mockRestore();
+    });
+
+    it('handles failure in getCurrentWeekSpent gracefully', async () => {
+      const sendSpy = jest.spyOn(notificationService, 'send').mockResolvedValue(true);
+      const weekSpentSpy = jest.spyOn(budgetService, 'getCurrentWeekSpent').mockRejectedValue(new Error('DB error'));
+
+      const result = await notificationService.notifyNewTransaction(
+        {
+          merchant: 'INDOMARET',
+          amount: 45000,
+          transaction_date: new Date(),
+        },
+        'Groceries'
+      );
+      expect(result).toBe(true);
+      expect(sendSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: expect.stringContaining('INDOMARET'),
+          message: expect.stringContaining('Rp 45.000'),
+        })
+      );
+      sendSpy.mockRestore();
+      weekSpentSpy.mockRestore();
     });
 
     it('formats and dispatches budget status notification', async () => {
@@ -57,6 +121,14 @@ describe('Notification and AI Services', () => {
       expect(weekBounds.dateFrom).toBeInstanceOf(Date);
       expect(weekBounds.dateTo).toBeInstanceOf(Date);
       expect(weekBounds.label).toBe('Minggu Ini');
+    });
+
+    it('computes current week spent correctly via transactionRepository', async () => {
+      const sumSpy = jest.spyOn(transactionRepository, 'sumAmount').mockResolvedValue(875000);
+      const spent = await budgetService.getCurrentWeekSpent();
+      expect(spent).toBe(875000);
+      expect(sumSpy).toHaveBeenCalledWith(expect.any(Date), expect.any(Date), true);
+      sumSpy.mockRestore();
     });
 
     it('handles chatWithAdvisor structure gracefully with response', async () => {

@@ -1,6 +1,7 @@
 'use strict';
 
 const env = require('../config/env');
+const budgetService = require('./budget.service');
 
 /**
  * Helper to format IDR currency.
@@ -93,15 +94,33 @@ class NotificationService {
    *
    * @param {Object} transaction
    * @param {string} [categoryName]
+   * @param {number|Object} [optionsOrWeeklySpent] - optional weekly spent amount or options object
    * @returns {Promise<boolean>}
    */
-  static async notifyNewTransaction(transaction, categoryName) {
+  static async notifyNewTransaction(transaction, categoryName, optionsOrWeeklySpent) {
     if (!transaction) return false;
 
     const amountStr = formatIDR(transaction.amount);
     const merchant = transaction.merchant || 'BCA Merchant';
     const category = categoryName || transaction.category_name || 'Tanpa Kategori';
     const isLarge = Number(transaction.amount || 0) >= 1000000;
+
+    let weeklySpent = null;
+    if (typeof optionsOrWeeklySpent === 'number') {
+      weeklySpent = optionsOrWeeklySpent;
+    } else if (optionsOrWeeklySpent && typeof optionsOrWeeklySpent === 'object') {
+      if (typeof optionsOrWeeklySpent.weeklySpent === 'number') {
+        weeklySpent = optionsOrWeeklySpent.weeklySpent;
+      }
+    }
+
+    if (weeklySpent === null) {
+      try {
+        weeklySpent = await budgetService.getCurrentWeekSpent();
+      } catch (err) {
+        console.warn('[notification] Could not compute weekly spent:', err.message);
+      }
+    }
 
     let dateStr = '';
     if (transaction.transaction_date || transaction.transactionDate) {
@@ -117,7 +136,14 @@ class NotificationService {
     }
 
     const title = `💳 Transaksi Baru: ${merchant}`;
-    const message = `${amountStr} • ${category}${dateStr ? `\n🕒 ${dateStr} WIB` : ''}`;
+    let message = `${amountStr} • ${category}`;
+    if (dateStr) {
+      message += `\n🕒 ${dateStr} WIB`;
+    }
+    if (typeof weeklySpent === 'number') {
+      message += `\n📊 Total pengeluaran minggu ini: ${formatIDR(weeklySpent)}`;
+    }
+
     const priority = isLarge ? 'high' : 'default';
     const tags = isLarge ? ['warning', 'money_with_wings', 'credit_card'] : ['credit_card', 'moneybag'];
 

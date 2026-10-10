@@ -87,6 +87,16 @@ const budgetService = {
   },
 
   /**
+   * Returns total real spending (is_ignored = false) for the current WIB week.
+   *
+   * @returns {Promise<number>}
+   */
+  async getCurrentWeekSpent() {
+    const { weekStart, weekEnd } = budgetService.getCurrentWeekRange();
+    return transactionRepository.sumAmount(weekStart, weekEnd, true);
+  },
+
+  /**
    * Returns the first–last day boundaries of the current WIB month.
    *
    * @returns {{ monthStart: Date, monthEnd: Date }}
