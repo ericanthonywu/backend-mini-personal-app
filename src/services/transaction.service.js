@@ -59,6 +59,7 @@ const transactionService = {
    * @returns {Promise<Object>}
    * @throws {AppError} 400 if categoryId references a non-existent category
    */
+  async create(data) {
     const merchant = data.merchant.trim();
     const transactionType = data.transactionType || 'Manual';
     // Mirror the email-parsed convention: "MERCHANT - TRANSACTION_TYPE"
