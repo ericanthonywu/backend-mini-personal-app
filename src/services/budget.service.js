@@ -29,22 +29,26 @@ function nowWIB() {
  */
 const budgetService = {
   /**
-   * Returns budget summary for current week and current month.
+   * Returns budget summary for current week, current month, and credit card billing cycle.
    *
    * Week = Monday to Sunday (WIB)
    * Month = 1st to last day of current month (WIB)
+   * Credit Card = 4th of cycle month to 3rd of following month (WIB)
    *
    * @returns {Promise<Object>}
    */
   async getSummary() {
     const { weekStart, weekEnd } = budgetService.getCurrentWeekRange();
     const { monthStart, monthEnd } = budgetService.getCurrentMonthRange();
+    const { ccStart, ccEnd, cycleLabel } = budgetService.getCreditCardCycleRange();
 
-    const [weekReal, weekTotal, monthReal, monthTotal] = await Promise.all([
+    const [weekReal, weekTotal, monthReal, monthTotal, ccReal, ccTotal] = await Promise.all([
       transactionRepository.sumAmount(weekStart, weekEnd, true),
       transactionRepository.sumAmount(weekStart, weekEnd, false),
       transactionRepository.sumAmount(monthStart, monthEnd, true),
       transactionRepository.sumAmount(monthStart, monthEnd, false),
+      transactionRepository.sumAmount(ccStart, ccEnd, true),
+      transactionRepository.sumAmount(ccStart, ccEnd, false),
     ]);
 
     return {
@@ -67,6 +71,17 @@ const budgetService = {
         remaining: Math.max(0, env.MONTHLY_BUDGET - monthReal),
         percentUsed: Math.min(100, Math.round((monthReal / env.MONTHLY_BUDGET) * 100)),
         isOverBudget: monthReal > env.MONTHLY_BUDGET,
+      },
+      creditCard: {
+        start: ccStart,
+        end: ccEnd,
+        budget: env.MONTHLY_BUDGET,
+        realSpent: ccReal,
+        totalSpent: ccTotal,
+        remaining: Math.max(0, env.MONTHLY_BUDGET - ccReal),
+        percentUsed: Math.min(100, Math.round((ccReal / env.MONTHLY_BUDGET) * 100)),
+        isOverBudget: ccReal > env.MONTHLY_BUDGET,
+        cycleLabel,
       },
     };
   },
@@ -108,28 +123,59 @@ const budgetService = {
   },
 
   /**
-   * Returns daily spending data for the current week and month for charts.
+   * Returns the boundaries of the credit card billing cycle in WIB (4th to 3rd).
+   *
+   * If today is >= 4th of month M, the cycle is 4 M to 3 M+1.
+   * If today is 1st-3rd of month M, the cycle is 4 M-1 to 3 M.
+   *
+   * @param {moment.Moment|Date} [date]
+   * @returns {{ ccStart: Date, ccEnd: Date, cycleLabel: string }}
+   */
+  getCreditCardCycleRange(date) {
+    const m = date ? moment.tz(date, TZ) : nowWIB();
+    let startM, endM;
+
+    if (m.date() >= 4) {
+      startM = m.clone().date(4).startOf('day');
+      endM   = m.clone().add(1, 'month').date(3).endOf('day');
+    } else {
+      startM = m.clone().subtract(1, 'month').date(4).startOf('day');
+      endM   = m.clone().date(3).endOf('day');
+    }
+
+    return {
+      ccStart: startM.toDate(),
+      ccEnd: endM.toDate(),
+      cycleLabel: `${startM.format('D MMM')} – ${endM.format('D MMM YYYY')}`,
+    };
+  },
+
+  /**
+   * Returns daily spending data for the current week, month, and credit card cycle for charts.
    *
    * @returns {Promise<Object>}
    */
   async getChartData() {
     const { weekStart, weekEnd }   = budgetService.getCurrentWeekRange();
     const { monthStart, monthEnd } = budgetService.getCurrentMonthRange();
+    const { ccStart, ccEnd, cycleLabel } = budgetService.getCreditCardCycleRange();
 
-    const [weekRows, monthRows] = await Promise.all([
+    const [weekRows, monthRows, ccRows] = await Promise.all([
       transactionRepository.findDailyTotals(weekStart, weekEnd),
       transactionRepository.findDailyTotals(monthStart, monthEnd),
+      transactionRepository.findDailyTotals(ccStart, ccEnd),
     ]);
 
     // Build a map for quick lookup by 'YYYY-MM-DD' key (WIB date)
     const toMap = (rows) => Object.fromEntries(rows.map((r) => [r.date, r]));
     const weekMap  = toMap(weekRows);
     const monthMap = toMap(monthRows);
+    const ccMap    = toMap(ccRows);
 
     // Iterate day-by-day in WIB and fill gaps with zeros.
     // Only include days up to today — future days are excluded so that the
     // cumulative line stops at the current day instead of extending flat to
-    // the end of the period (e.g. Sunday).
+    // the end of the period.
     const today = nowWIB().startOf('day');
 
     const fillDays = (start, end, map) => {
@@ -154,6 +200,11 @@ const budgetService = {
       monthly: {
         days: fillDays(monthStart, monthEnd, monthMap),
         budget: env.MONTHLY_BUDGET,
+      },
+      creditCard: {
+        days: fillDays(ccStart, ccEnd, ccMap),
+        budget: env.MONTHLY_BUDGET,
+        cycleLabel,
       },
     };
   },
@@ -329,6 +380,15 @@ const budgetService = {
           dateTo: undefined,
           label: 'Semua Waktu',
         };
+      case 'credit_card':
+      case 'cc': {
+        const { ccStart, ccEnd, cycleLabel } = budgetService.getCreditCardCycleRange();
+        return {
+          dateFrom: ccStart,
+          dateTo: ccEnd,
+          label: `Tagihan KK (${cycleLabel})`,
+        };
+      }
       case 'month':
       default:
         return {
