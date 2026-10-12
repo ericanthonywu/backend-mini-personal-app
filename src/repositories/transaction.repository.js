@@ -7,6 +7,61 @@ const db     = require('../config/database');
 const TZ = 'Asia/Jakarta'; // WIB (UTC+7)
 
 /**
+ * Returns a Knex subquery that aggregates total split amounts per transaction.
+ */
+function getSplitsSubquery() {
+  return db('transaction_splits')
+    .select('transaction_id')
+    .sum('amount as total_split')
+    .groupBy('transaction_id')
+    .as('ts');
+}
+
+/**
+ * Attaches split payments, total_split_amount, and net_amount to an array of transaction objects.
+ *
+ * @param {Array<Object>} transactions
+ * @returns {Promise<Array<Object>>}
+ */
+async function attachSplitsToTransactions(transactions) {
+  if (!transactions || transactions.length === 0) return [];
+  const txIds = transactions.map((t) => t.id);
+  const splits = await db('transaction_splits')
+    .whereIn('transaction_id', txIds)
+    .orderBy('created_at', 'asc');
+
+  const splitsByTxId = {};
+  for (const s of splits) {
+    if (!splitsByTxId[s.transaction_id]) {
+      splitsByTxId[s.transaction_id] = [];
+    }
+    splitsByTxId[s.transaction_id].push({
+      id: s.id,
+      transaction_id: s.transaction_id,
+      amount: parseInt(s.amount, 10),
+      paid_by: s.paid_by,
+      notes: s.notes || '',
+      created_at: s.created_at,
+      updated_at: s.updated_at,
+    });
+  }
+
+  return transactions.map((t) => {
+    const txSplits = splitsByTxId[t.id] || [];
+    const totalSplit = txSplits.reduce((sum, s) => sum + s.amount, 0);
+    const amount = parseInt(t.amount, 10);
+    return {
+      ...t,
+      amount,
+      original_amount: amount,
+      total_split_amount: totalSplit,
+      net_amount: Math.max(0, amount - totalSplit),
+      splits: txSplits,
+    };
+  });
+}
+
+/**
  * Transaction Repository — all DB access for transactions.
  * Returns plain objects. No business logic.
  */
@@ -15,7 +70,7 @@ const transactionRepository = {
    * Find transactions with optional filters and pagination.
    *
    * @param {{ categoryId?: string, isIgnored?: boolean, dateFrom?: Date, dateTo?: Date, search?: string, limit?: number, offset?: number }} filters
-   * @returns {Promise<{ data: Array, total: number }>}
+   * @returns {Promise<{ data: Array, total: number, totalAmount: number }>}
    */
   async findAll(filters = {}) {
     const {
@@ -40,7 +95,8 @@ const transactionRepository = {
 
     // Separate count and sum queries to avoid GROUP BY conflicts with SELECT *
     const countQuery = db('transactions as t');
-    const sumQuery = db('transactions as t');
+    const sumQuery = db('transactions as t')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id');
 
     if (categoryId !== undefined) {
       baseQuery.where('t.category_id', categoryId);
@@ -71,11 +127,13 @@ const transactionRepository = {
     }
 
     const sortColumn = sortBy === 'amount' ? 't.amount' : 't.transaction_date';
-    const data = await baseQuery
+    const rows = await baseQuery
       .orderBy(sortColumn, sortOrder)
       .orderBy('t.transaction_date', 'desc')
       .limit(limit)
       .offset(offset);
+
+    const data = await attachSplitsToTransactions(rows);
 
     const hasDateFilter = Boolean(dateFrom || dateTo);
 
@@ -84,7 +142,9 @@ const transactionRepository = {
 
     if (hasDateFilter) {
       const [{ count }] = await countQuery.count('t.id as count');
-      const [{ sum }] = await sumQuery.sum('t.amount as sum');
+      const [{ sum }] = await sumQuery.select(
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as sum')
+      );
       total = parseInt(count, 10);
       totalAmount = parseInt(sum || '0', 10);
     } else {
@@ -103,11 +163,15 @@ const transactionRepository = {
    * @returns {Promise<Object|undefined>}
    */
   async findById(id) {
-    return db('transactions as t')
+    const tx = await db('transactions as t')
       .leftJoin('categories as c', 't.category_id', 'c.id')
       .select('t.*', 'c.name as category_name', 'c.color as category_color')
       .where('t.id', id)
       .first();
+
+    if (!tx) return undefined;
+    const [withSplits] = await attachSplitsToTransactions([tx]);
+    return withSplits;
   },
 
   /**
@@ -148,9 +212,6 @@ const transactionRepository = {
 
   /**
    * Insert a manually-entered transaction.
-   *
-   * Manual entries have no source email, so we synthesize a unique
-   * email_message_id (the column is NOT NULL + UNIQUE) with a `manual:` prefix.
    *
    * @param {{ amount: number, transactionDate: Date, merchant: string, transactionType?: string, notes?: string, categoryId?: string, isIgnored?: boolean }} data
    * @returns {Promise<Object>} - inserted row
@@ -200,7 +261,7 @@ const transactionRepository = {
   },
 
   /**
-   * Get total amount of non-ignored transactions within a date range.
+   * Get total amount of non-ignored transactions within a date range, net of splits.
    *
    * @param {Date} dateFrom
    * @param {Date} dateTo
@@ -208,14 +269,17 @@ const transactionRepository = {
    * @returns {Promise<number>}
    */
   async sumAmount(dateFrom, dateTo, excludeIgnored = false) {
-    const query = db('transactions')
-      .whereBetween('transaction_date', [dateFrom, dateTo]);
+    const query = db('transactions as t')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
+      .whereBetween('t.transaction_date', [dateFrom, dateTo]);
 
     if (excludeIgnored) {
-      query.where('is_ignored', false);
+      query.where('t.is_ignored', false);
     }
 
-    const [{ sum }] = await query.sum('amount as sum');
+    const [{ sum }] = await query.select(
+      db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as sum')
+    );
     return parseInt(sum || '0', 10);
   },
 
@@ -226,37 +290,36 @@ const transactionRepository = {
    * @returns {Promise<Array>}
    */
   async findRecent(limit = 5) {
-    return db('transactions as t')
+    const rows = await db('transactions as t')
       .leftJoin('categories as c', 't.category_id', 'c.id')
       .select('t.*', 'c.name as category_name', 'c.color as category_color')
       .orderBy('t.transaction_date', 'desc')
       .limit(limit);
+
+    return attachSplitsToTransactions(rows);
   },
 
   /**
-   * Get daily spending totals for a date range, split by real vs total.
+   * Get daily spending totals for a date range, net of splits.
    *
    * @param {Date} dateFrom
    * @param {Date} dateTo
    * @returns {Promise<Array<{ date: string, realSpent: number, totalSpent: number }>>}
    */
   async findDailyTotals(dateFrom, dateTo) {
-    // Use WIB timezone for DATE extraction so that transactions that occur
-    // in the evening (e.g. 18:00 UTC = midnight+1 WIB) are grouped to the
-    // correct WIB calendar day.
-    const rows = await db('transactions')
-      .whereBetween('transaction_date', [dateFrom, dateTo])
-      .where('is_ignored', false)
+    const rows = await db('transactions as t')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
+      .whereBetween('t.transaction_date', [dateFrom, dateTo])
+      .where('t.is_ignored', false)
       .select(
-        db.raw(`DATE(transaction_date AT TIME ZONE 'Asia/Jakarta') as date`),
-        db.raw('SUM(amount) as total_spent'),
-        db.raw('SUM(amount) as real_spent')
+        db.raw(`DATE(t.transaction_date AT TIME ZONE 'Asia/Jakarta') as date`),
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as total_spent'),
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as real_spent')
       )
-      .groupByRaw(`DATE(transaction_date AT TIME ZONE 'Asia/Jakarta')`)
+      .groupByRaw(`DATE(t.transaction_date AT TIME ZONE 'Asia/Jakarta')`)
       .orderBy('date', 'asc');
 
     return rows.map((r) => ({
-      // moment parses the raw date value and formats it cleanly in WIB.
       date: moment.tz(r.date, TZ).format('YYYY-MM-DD'),
       realSpent:  parseInt(r.real_spent  || '0', 10),
       totalSpent: parseInt(r.total_spent || '0', 10),
@@ -264,26 +327,17 @@ const transactionRepository = {
   },
 
   /**
-   * Get spending totals grouped by calendar week (Mon–Sun) for a given year/month.
-   *
-   * Weeks are full Mon–Sun calendar weeks. The first week starts on the Monday
-   * on or before the 1st of the month, and the last week ends on the Sunday on
-   * or after the last day of the month — meaning weeks can span month boundaries.
-   * A cross-month week (e.g. Jul 27–Aug 2) will appear in both July and August
-   * with the same combined total, so the spending summary and transaction list
-   * always show the same numbers for any given week.
+   * Get spending totals grouped by calendar week (Mon–Sun) for a given year/month, net of splits.
    *
    * @param {number} year
    * @param {number} month  1-indexed
    * @returns {Promise<Array<{ week: number, startDate: string, endDate: string, realSpent: number, totalSpent: number }>>}
    */
   async findWeeklyTotals(year, month) {
-    // Build the Mon–Sun week boundaries that cover this month in WIB (Asia/Jakarta).
     const monthStr = String(month).padStart(2, '0');
     const firstDayOfMonth = moment.tz(`${year}-${monthStr}-01`, 'YYYY-MM-DD', TZ).startOf('day');
     const lastDayOfMonth  = firstDayOfMonth.clone().endOf('month').endOf('day');
 
-    // Find the Monday on or before the 1st of the month (isoWeekday: 1=Mon, 7=Sun)
     const firstWeekStart = firstDayOfMonth.clone().startOf('isoWeek');
 
     const weeks = [];
@@ -305,15 +359,15 @@ const transactionRepository = {
       curWeekStart.add(1, 'week');
     }
 
-    // Query each week separately so cross-month transactions are included
     const results = await Promise.all(
       weeks.map(async (w) => {
-        const [row] = await db('transactions')
-          .whereBetween('transaction_date', [w.start, w.end])
-          .where('is_ignored', false)
+        const [row] = await db('transactions as t')
+          .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
+          .whereBetween('t.transaction_date', [w.start, w.end])
+          .where('t.is_ignored', false)
           .select(
-            db.raw('SUM(amount) as total_spent'),
-            db.raw('SUM(amount) as real_spent')
+            db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as total_spent'),
+            db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as real_spent')
           );
         return {
           week: w.week,
@@ -329,7 +383,7 @@ const transactionRepository = {
   },
 
   /**
-   * Get spending totals grouped by month for a given year.
+   * Get spending totals grouped by month for a given year, net of splits.
    *
    * @param {number} year
    * @returns {Promise<Array<{ month: number, realSpent: number, totalSpent: number }>>}
@@ -338,15 +392,16 @@ const transactionRepository = {
     const yearStart = moment.tz(`${year}-01-01 00:00:00`, 'YYYY-MM-DD HH:mm:ss', TZ).toDate();
     const yearEnd   = moment.tz(`${year}-12-31 23:59:59.999`, 'YYYY-MM-DD HH:mm:ss.SSS', TZ).toDate();
 
-    const rows = await db('transactions')
-      .whereBetween('transaction_date', [yearStart, yearEnd])
-      .where('is_ignored', false)
+    const rows = await db('transactions as t')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
+      .whereBetween('t.transaction_date', [yearStart, yearEnd])
+      .where('t.is_ignored', false)
       .select(
-        db.raw(`EXTRACT(MONTH FROM (transaction_date AT TIME ZONE 'Asia/Jakarta'))::int AS month_num`),
-        db.raw('SUM(amount) as total_spent'),
-        db.raw('SUM(amount) as real_spent')
+        db.raw(`EXTRACT(MONTH FROM (t.transaction_date AT TIME ZONE 'Asia/Jakarta'))::int AS month_num`),
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as total_spent'),
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as real_spent')
       )
-      .groupByRaw(`EXTRACT(MONTH FROM (transaction_date AT TIME ZONE 'Asia/Jakarta'))::int`)
+      .groupByRaw(`EXTRACT(MONTH FROM (t.transaction_date AT TIME ZONE 'Asia/Jakarta'))::int`)
       .orderBy('month_num', 'asc');
 
     return rows.map((r) => ({
@@ -357,7 +412,7 @@ const transactionRepository = {
   },
 
   /**
-   * Get today's spending totals and top N most expensive non-ignored transactions.
+   * Get today's spending totals and top N most expensive non-ignored transactions, net of splits.
    *
    * @param {Date} dateFrom  — start of today (WIB midnight)
    * @param {Date} dateTo    — end of today (WIB 23:59:59)
@@ -365,16 +420,18 @@ const transactionRepository = {
    * @returns {Promise<{ totalSpent: number, realSpent: number, topTransactions: Array }>}
    */
   async findDailySummary(dateFrom, dateTo, limit = 5) {
-    const [totalsRow] = await db('transactions')
-      .whereBetween('transaction_date', [dateFrom, dateTo])
-      .where('is_ignored', false)
+    const [totalsRow] = await db('transactions as t')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
+      .whereBetween('t.transaction_date', [dateFrom, dateTo])
+      .where('t.is_ignored', false)
       .select(
-        db.raw('SUM(amount) as total_spent'),
-        db.raw('SUM(CASE WHEN is_ignored = false THEN amount ELSE 0 END) as real_spent')
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as total_spent'),
+        db.raw('COALESCE(SUM(CASE WHEN t.is_ignored = false THEN (t.amount - COALESCE(ts.total_split, 0)) ELSE 0 END), 0) as real_spent')
       );
 
     const topRows = await db('transactions as t')
       .leftJoin('categories as c', 't.category_id', 'c.id')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
       .whereBetween('t.transaction_date', [dateFrom, dateTo])
       .where('t.is_ignored', false)
       .select(
@@ -384,9 +441,11 @@ const transactionRepository = {
         't.transaction_date',
         't.notes',
         'c.name as category_name',
-        'c.color as category_color'
+        'c.color as category_color',
+        db.raw('COALESCE(ts.total_split, 0)::integer as total_split_amount'),
+        db.raw('(t.amount - COALESCE(ts.total_split, 0))::integer as net_amount')
       )
-      .orderBy('t.amount', 'desc')
+      .orderByRaw('(t.amount - COALESCE(ts.total_split, 0)) desc')
       .limit(limit);
 
     return {
@@ -396,6 +455,9 @@ const transactionRepository = {
         id:              r.id,
         merchant:        r.merchant,
         amount:          parseInt(r.amount, 10),
+        originalAmount:  parseInt(r.amount, 10),
+        totalSplitAmount: parseInt(r.total_split_amount || '0', 10),
+        netAmount:       parseInt(r.net_amount || r.amount, 10),
         transactionDate: r.transaction_date,
         notes:           r.notes || '',
         categoryName:    r.category_name  || null,
@@ -405,7 +467,7 @@ const transactionRepository = {
   },
 
   /**
-   * Get category breakdown of expenses within a date range.
+   * Get category breakdown of expenses within a date range, net of splits.
    *
    * @param {Object} [params]
    * @param {Date} [params.dateFrom]
@@ -416,13 +478,14 @@ const transactionRepository = {
   async findCategoryBreakdown({ dateFrom, dateTo, excludeIgnored = true } = {}) {
     const query = db('transactions as t')
       .leftJoin('categories as c', 't.category_id', 'c.id')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
       .select(
         'c.id as category_id',
         db.raw("COALESCE(c.name, 'Uncategorized') as category_name"),
         db.raw("COALESCE(c.color, '#94A3B8') as category_color"),
         db.raw('COUNT(t.id) as transaction_count'),
-        db.raw('SUM(t.amount) as total_amount'),
-        db.raw('AVG(t.amount) as average_amount')
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as total_amount'),
+        db.raw('COALESCE(AVG(t.amount - COALESCE(ts.total_split, 0)), 0) as average_amount')
       );
 
     if (excludeIgnored) {
@@ -436,7 +499,7 @@ const transactionRepository = {
     }
 
     query.groupBy('c.id', 'c.name', 'c.color')
-      .orderByRaw('SUM(t.amount) DESC');
+      .orderByRaw('SUM(t.amount - COALESCE(ts.total_split, 0)) DESC');
 
     const rows = await query;
 
@@ -460,7 +523,7 @@ const transactionRepository = {
       const amount = parseInt(r.total_amount || '0', 10);
       const count = parseInt(r.transaction_count || '0', 10);
       const avg = Math.round(parseFloat(r.average_amount || '0'));
-      const percentage = totalSpent > 0 ? Math.round((amount / totalSpent) * 1000) / 10 : 0; // 1 decimal place
+      const percentage = totalSpent > 0 ? Math.round((amount / totalSpent) * 1000) / 10 : 0;
 
       return {
         categoryId: r.category_id || null,
@@ -483,7 +546,7 @@ const transactionRepository = {
   },
 
   /**
-   * Find top spending merchants in a date range.
+   * Find top spending merchants in a date range, net of splits.
    *
    * @param {Object} [params]
    * @param {Date} [params.dateFrom]
@@ -494,9 +557,12 @@ const transactionRepository = {
    */
   async findTopMerchants({ dateFrom, dateTo, limit = 5, excludeIgnored = true } = {}) {
     const query = db('transactions as t')
+      .leftJoin(getSplitsSubquery(), 't.id', 'ts.transaction_id')
       .select('t.merchant')
-      .sum('t.amount as total_spent')
-      .count('t.id as count');
+      .select(
+        db.raw('COALESCE(SUM(t.amount - COALESCE(ts.total_split, 0)), 0) as total_spent'),
+        db.raw('COUNT(t.id) as count')
+      );
 
     if (excludeIgnored) {
       query.where('t.is_ignored', false);
@@ -509,7 +575,7 @@ const transactionRepository = {
     }
 
     query.groupBy('t.merchant')
-      .orderByRaw('SUM(t.amount) DESC')
+      .orderByRaw('SUM(t.amount - COALESCE(ts.total_split, 0)) DESC')
       .limit(limit);
 
     const rows = await query;

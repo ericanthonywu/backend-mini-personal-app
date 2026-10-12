@@ -10,6 +10,7 @@ const categoryController = require('../controllers/category.controller');
 const budgetController = require('../controllers/budget.controller');
 const alertController = require('../controllers/alert.controller');
 const notificationController = require('../controllers/notification.controller');
+const splitController = require('../controllers/split.controller');
 
 const router = Router();
 
@@ -31,6 +32,11 @@ router.post('/transactions/:id/ai-categorize', transactionController.aiCategoriz
 router.get('/transactions/:id', transactionController.getById);
 router.patch('/transactions/:id', ...transactionController.update);
 router.delete('/transactions/:id', transactionController.delete);
+
+// Split Payments
+router.post('/transactions/:id/splits', ...splitController.create);
+router.patch('/transactions/:id/splits/:splitId', ...splitController.update);
+router.delete('/transactions/:id/splits/:splitId', splitController.delete);
 
 // Categories
 router.get('/categories', categoryController.list);
